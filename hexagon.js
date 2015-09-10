@@ -29,8 +29,7 @@ BuyCommand.prototype.click = function(hex) {
 	// Remove unreachable payments
 	var unreachables = new Array();
 	this.paid.forEach(function(paidHex) {
-	    if (!isReachable(paidHex, paidHex.grid,
-			     this.player.owned, this.paid)) {
+	    if (!isReachable(paidHex, this.player.owned, this.paid)) {
 		unreachables.push(paidHex);
 	    }
 	});
@@ -41,8 +40,7 @@ BuyCommand.prototype.click = function(hex) {
 
 	// Unselect target if it's unreachable
 	if (this.hex != null) {
-	    if (!isReachable(this.hex, this.hex.grid,
-			     this.player.owned, this.paid)) {
+	    if (!isReachable(this.hex, this.player.owned, this.paid)) {
 		this.select(this.hex);
 	    }
 	}
@@ -57,7 +55,7 @@ BuyCommand.prototype.click = function(hex) {
     if (hex.building != Hex.Building.EMPTY &&
 	hex.owner == null)
 	return "Neutral buildings cannot be selected when buying land.";
-    if (this.player.owned.has(hex)) {
+    if (hex.owner == this.player) {
 	return "You already own this land.";
     }
 
@@ -70,7 +68,7 @@ BuyCommand.prototype.click = function(hex) {
     }
 
     // Reachability check
-    var reachable = isReachable(this, this.grid, player.owned, player.paid);
+    var reachable = isReachable(hex, this.player.owned, this.player.paid);
 
     if (reachable) {
 	if (hex.owner != null) {
@@ -91,10 +89,14 @@ BuyCommand.prototype.click = function(hex) {
 BuyCommand.prototype.execute = function() {
     this.hex.refresh();
     this.player.discs--;
+    this.player.owned.add(this.hex);
     this.paid.forEach(function(paidHex) {
 	this.player.money--;
 	paidHex.owner.money++;
     });
+
+    this.hex = null;
+    this.paid.clear();
 }
 
 BuyCommand.prototype.abort = function() {
@@ -166,7 +168,7 @@ BuildCommand.prototype.click = function(hex) {
 	this.verified = false;
 	this.plan[index] = null;
 	this.unselect(hex);
-	return updateCrime();
+	return this.updateCrime();
     }
 
     // Give help for invalid clicks
@@ -174,12 +176,14 @@ BuildCommand.prototype.click = function(hex) {
 	return "Water tiles are inaccessible.";
     if (hex.type == Hex.Type.MOUNTAIN)
 	return "Mountain tiles are inaccessible.";
+    if (hex.type == Hex.Type.LAND)
+	return "You cannot build any buildings here.";
     if (hex.building != Hex.Building.EMPTY &&
 	hex.owner == null)
 	return "Neutral buildings cannot be selected when building.";
     if (hex.building != Hex.Building.DISC && hex.owner == this.player)
 	return "You already have building here.";
-    if (!this.player.owned.has(this))
+    if (hex.owner != this.player)
 	return "You don't own this tile.";
 
     // Check that there are enough buildings
@@ -192,9 +196,9 @@ BuildCommand.prototype.click = function(hex) {
 
     // Check for illegal building combination
     if (index == 1 && this.plan[2] != null)
-	return "You cannot build commerce, because you already have industry.";
+	return "You cannot build commerce, because you already have industry selected.";
     if (index == 2 && this.plan[1] != null)
-	return "You cannot build industry, because you already have commerce.";
+	return "You cannot build industry, because you already have commerce selected.";
 
     var newPlan = [this.plan[0], this.plan[1], this.plan[2]];
     newPlan[index] = hex;
@@ -245,6 +249,9 @@ BuildCommand.prototype.execute = function() {
 	if (ui.game.indPrice < 12) ui.game.indPrice++;
     else
 	if (ui.game.indPrice > 4) ui.game.indPrice--;
+
+    this.plan = [null, null, null];
+    this.verified = false;
 }
 
 BuildCommand.prototype.abort = function() {
@@ -287,11 +294,11 @@ BuildCommand.prototype.rangeCheck = function(plan) {
 BuildCommand.prototype.updateCrime = function() {
     var tokensNeeded = [0, 0, 0];
     if (this.plan[0] != null)
-	tokensNeeded[0] = game.resCrime[this.player.resHouses];
+	tokensNeeded[0] = ui.game.resCrime[this.player.resHouses];
     if (this.plan[1] != null)
-	tokensNeeded[1] = game.comCrime[this.player.comHouses];
+	tokensNeeded[1] = ui.game.comCrime[this.player.comHouses];
     if (this.plan[2] != null)
-	tokensNeeded[2] = game.indCrime[this.player.indHouses];
+	tokensNeeded[2] = ui.game.indCrime[this.player.indHouses];
 
     if (this.plan[0] != null && this.plan[1] == null && this.plan[2] == null)
 	tokensNeeded[0]++;
@@ -353,7 +360,7 @@ getBridgeTiles = function(list) {
 	return null;
 
     var parity = list[0].col % 2 == 0;
-    var grid = list[0].grid;
+    var grid = ui.grid;
 
     // right
     if (list[1].col == list[0].col + 2 &&
@@ -482,7 +489,7 @@ PoliticsCommand.prototype.click = function(hex) {
 	break;
     case 2:
 	var tiles = getBridgeTiles(list);
-	var grid = list[0].grid;
+	var grid = ui.grid;
 	if (tiles != null) {
 	    var exists = false;
 	    grid.bridges.forEach(function(bridge) {
@@ -605,15 +612,19 @@ PoliticsCommand.prototype.execute = function() {
 	case Hex.Building.PORT:
 	    ui.game.portCount--;
 	    this.player.money -= ui.game.portCost;
-	    list[0].grid.drawPort(list[0], list[1]);
+	    ui.grid.drawPort(list[0], list[1]);
 	    break;
 	case Hex.Building.AIRPORT:
 	    ui.game.airportCount--;
 	    this.player.money -= ui.game.airportCost;
-	    list[0].grid.drawPort(list[0], list[1], list[2]);
+	    ui.grid.drawPort(list[0], list[1], list[2]);
 	    break;
 	}
     }
+
+    this.plan.clear();
+    this.bridge = false;
+    this.verified = false;
 }
 
 PoliticsCommand.prototype.abort = function() {
@@ -833,7 +844,12 @@ passClick = function() {
 }
 
 executeClick = function() {
-    ui.action.execute();
+    if (ui.command != null) {
+	ui.command.execute();
+	ui.command = null;
+	ui.action = UI.Action.NOTHING;
+	ui.refreshButtons();
+    }
 }
 
 //=============================================================== Hexagon Grid
@@ -1330,7 +1346,7 @@ addWork = function(hex, target, visited, work, paid) {
     return false;
 }
 
-isReachable = function(hex, grid, owned, paid) {
+isReachable = function(dst, owned, paid) {
     var visited = new Set();
     var work = new Array();
     var reachable = false;
@@ -1343,16 +1359,16 @@ isReachable = function(hex, grid, owned, paid) {
 	var neighbors = h.getNeighbors();
 	neighbors.forEach(function(hex) {
 	    if (reachable) return;
-	    reachable = addWork(hex, hex, visited, work, paid);
+	    reachable = addWork(hex, dst, visited, work, paid);
 	});
-	for (var i = 0; i < this.grid.bridges.length; i++) {
+	for (var i = 0; i < ui.grid.bridges.length; i++) {
 	    if (reachable) return true;
-	    if (grid.bridges[i][0] == h) {
+	    if (ui.grid.bridges[i][0] == h) {
 		reachable = addWork(
-		    grid.bridges[i][1], hex, visited, work, paid);
-	    } else if (grid.bridges[i][1] == h) {
+		    ui.grid.bridges[i][1], dst, visited, work, paid);
+	    } else if (ui.grid.bridges[i][1] == h) {
 		reachable = addWork(
-		    grid.bridges[i][0], hex, visited, work, paid);
+		    ui.grid.bridges[i][0], dst, visited, work, paid);
 	    }
 	}
 	if (reachable) return true;
@@ -1463,7 +1479,7 @@ bfs = function(src, dst) {
 	    distance++;
 
 	    // Optimization, stop search
-	    if (distance > game.getCurrentPlayer().range) {
+	    if (distance > ui.game.getCurrentPlayer().range) {
 		return -1;
 	    }
 
@@ -1472,7 +1488,7 @@ bfs = function(src, dst) {
 	}
 
 	// Hack to add distance for bridges
-	if (h.grid != src.grid) {
+	if (h.grid != ui.grid) {
 	    // Grid is same for all Hexes, but not
 	    // for BFSBridge type.
 	    bfsWork(h.grid, visited, work);
@@ -1490,14 +1506,14 @@ bfs = function(src, dst) {
 	neighbors.forEach(function(hex) {
 	    bfsWork(hex, visited, work);
 	});
-	for (var i = 0; i < h.grid.bridges.length; i++) {
-	    if (h.grid.bridges[i][0] == h) {
-		if (!visited.has(h.grid.bridges[i][1])) {
-		    work.push(new BFSBridge(h.grid.bridges[i][1]));
+	for (var i = 0; i < ui.grid.bridges.length; i++) {
+	    if (ui.grid.bridges[i][0] == h) {
+		if (!visited.has(ui.grid.bridges[i][1])) {
+		    work.push(new BFSBridge(ui.grid.bridges[i][1]));
 		}
-	    } else if (h.grid.bridges[i][1] == h) {
-		if (!visited.has(h.grid.bridges[i][0])) {
-		    work.push(new BFSBridge(h.grid.bridges[i][0]));
+	    } else if (ui.grid.bridges[i][1] == h) {
+		if (!visited.has(ui.grid.bridges[i][0])) {
+		    work.push(new BFSBridge(ui.grid.bridges[i][0]));
 		}
 	    }
 	}
