@@ -179,7 +179,7 @@ BuildCommand.prototype.click = function(hex) {
 	return "Neutral buildings cannot be selected when building.";
     if (hex.building != Hex.Building.DISC && hex.owner == this.player)
 	return "You already have building here.";
-    if (!player.owned.has(this))
+    if (!this.player.owned.has(this))
 	return "You don't own this tile.";
 
     // Check that there are enough buildings
@@ -338,7 +338,7 @@ PoliticsCommand.prototype.canExecute = function() {
 checkTerrain = function(hex1, hex2) {
     if (hex1.type == hex2.type)
 	if (hex1.type == Hex.Type.WATER ||
-	    hex2.type == Hex.Type.MOUNTAIN)
+	    hex1.type == Hex.Type.MOUNTAIN)
 	    return true;
     return false;
 }
@@ -352,7 +352,7 @@ getBridgeTiles = function(list) {
     if (list.length != 2)
 	return null;
 
-    var parity = list[0] % 2 == 0;
+    var parity = list[0].col % 2 == 0;
     var grid = list[0].grid;
 
     // right
@@ -446,32 +446,32 @@ PoliticsCommand.prototype.click = function(hex) {
 	    return "";
 	}
 
+	this.clearBridge();
 	hex.building = this.plan.get(hex);
 	this.plan.delete(hex);
 	hex.refresh();
     } else {
+	this.clearBridge();
 	this.plan.set(hex, hex.building);
     }
 
     // Reset everything back to normal
     var list = new Array();
     this.plan.forEach(function(value, key, map) {
-	list.add(key);
+	list.push(key);
 	key.building = value;
 	key.refresh();
+	key.highlight();
     });
 
     list.sort(sorter);
 
-    // Refresh bridge away
-    this.clearBridge();
-
     switch (list.length) {
     case 1:
-	this.plan.set(hex, list[0].building);
-	if (checkNeutralDiscs(list)) {
-	    list[0].building = Hex.Building.POLICE;
-	}
+	if (!checkNeutralDiscs(list))
+	    return "Police can only be built on top of neutral discs.";
+
+	list[0].building = Hex.Building.POLICE;
 	list[0].refresh();
 	list[0].highlight();
 
@@ -496,7 +496,7 @@ PoliticsCommand.prototype.click = function(hex) {
 	    list[0].highlight();
 	    list[1].highlight();
 
-	    var isBridge = tiles[0].type = Hex.Type.WATER;
+	    var isBridge = tiles[0].type == Hex.Type.WATER;
 	    if (!exists) {
 		grid.drawBridge(list[0], list[1]);
 		this.bridge = true;
@@ -543,7 +543,7 @@ PoliticsCommand.prototype.click = function(hex) {
 	break;
     case 3:
         if (!checkAirport(list[0], list[1], list[2]))
-	    return "Airport must be built on 3 tiles, which for a straight line.";
+	    return "Airport must be built on 3 tiles, which form a straight line.";
         if (!checkNeutralDiscs(list))
 	    return "Airport can only be built on top of neutral discs.";
 
@@ -571,6 +571,11 @@ PoliticsCommand.prototype.click = function(hex) {
 
 PoliticsCommand.prototype.clearBridge = function() {
     if (this.bridge) {
+	var list = new Array();
+	this.plan.forEach(function(value, key, map) {
+	    list.push(key);
+	});
+	list.sort(sorter);
 	var tiles = getBridgeTiles(list);
 	if (tiles != null) {
 	    tiles[0].refresh();
@@ -583,7 +588,7 @@ PoliticsCommand.prototype.clearBridge = function() {
 PoliticsCommand.prototype.execute = function() {
     var list = new Array();
     this.plan.forEach(function(value, key, map) {
-	list.add(key);
+	list.push(key);
 	key.refresh();
     });
     list.sort(sorter);
@@ -683,7 +688,7 @@ function UI() {
     this.passButton.disabled = true;
 }
 
-UI.prototype.click = function(action, command) {
+UI.prototype.switchAction = function(action) {
     // Clear the old plan
     if (this.command != null) {
 	this.command.abort();
@@ -694,7 +699,17 @@ UI.prototype.click = function(action, command) {
 	this.command = null;
     } else {
 	this.action = action;
-	this.command = command;
+	switch (action) {
+	case UI.Action.BUY:
+	    this.command = new BuyCommand();
+	    break;
+	case UI.Action.BUILD:
+	    this.command = new BuildCommand();
+	    break;
+	case UI.Action.POLITICS:
+	    this.command = new PoliticsCommand();
+	    break;
+	}
     }
 
     this.refreshButtons();
@@ -716,22 +731,22 @@ UI.prototype.refreshButtons = function() {
 
     this.validateButtons();
 
-    this.buyButton.backgroundColor = null;
-    this.buildButton.backgroundColor = null;
-    this.politicsButton.backgroundColor = null;
+    this.buyButton.style.backgroundColor = null;
+    this.buildButton.style.backgroundColor = null;
+    this.politicsButton.style.backgroundColor = null;
 
     var player = this.game.getCurrentPlayer();
     var color = player.color;
 
     switch (this.action) {
     case UI.Action.BUY:
-	this.buyButton.backgroundColor = color;
+	this.buyButton.style.backgroundColor = color;
 	break;
     case UI.Action.BUILD:
-	this.buildButton.backgroundColor = color;
+	this.buildButton.style.backgroundColor = color;
 	break;
     case UI.Action.POLITICS:
-	this.politicsButton.backgroundColor = color;
+	this.politicsButton.style.backgroundColor = color;
 	break;
     }
 }
@@ -742,11 +757,11 @@ UI.prototype.validateButtons = function() {
     case UI.Action.BUY:
     case UI.Action.BUILD:
     case UI.Action.POLITICS:
-    case UI.Action.EMPTY:
-	this.buyButton.disabled = !validateDiscs();
+    case UI.Action.NOTHING:
+	this.buyButton.disabled = !this.validateDiscs();
 	this.buildButton.disabled = false;
 	this.politicsButton.disabled = false;
-	this.loanButton.disabled = !this.validateLoan();
+	this.loanButton.disabled = !this.validateDiscs();
 	this.executeButton.disabled = !this.validateExecute();
 	this.passButton.disabled = false;
 	break;
@@ -764,7 +779,7 @@ UI.prototype.validateButtons = function() {
 
 UI.prototype.validateExecute = function() {
 
-    if (this.action == UI.Action.EMPTY) return false;
+    if (this.action == UI.Action.NOTHING) return false;
 
     if (this.command != null) {
 	return this.command.canExecute();
@@ -784,24 +799,30 @@ function log(msg) {
 };
 
 startClick = function() {
-    ui.game = new Game(2);
+    if (ui.command != null) {
+	ui.command.abort();
+    }
     ui.action = UI.Action.NOTHING;
+
+    ui.game = new Game(2);
     if (ui.grid == null) {
 	ui.grid = new HexagonGrid("HexCanvas", 30);
     }
     ui.grid.initialize(7, 10, 5, 5, false);
+
+    ui.refreshButtons();
 }
 
 buyClick = function() {
-    ui.click(UI.Action.BUY, new BuyCommand());
+    ui.switchAction(UI.Action.BUY);
 }
 
 buildClick = function() {
-    ui.click(UI.Action.BUILD, new BuildCommand());
+    ui.switchAction(UI.Action.BUILD);
 }
 
 politicsClick = function() {
-    ui.click(UI.Action.POLITICS, new PoliticsCommand());
+    ui.switchAction(UI.Action.POLITICS);
 }
 
 loanClick = function() {
@@ -864,10 +885,6 @@ HexagonGrid.prototype.initialize =
     }
 
     this.refresh();
-
-    buildButton.disabled = true;
-    politicsButton.disabled = false;
-    passButton.disabled = false;
 };
 
 HexagonGrid.prototype.refresh = function() {
