@@ -1,28 +1,781 @@
+var ui = new UI();
 
-var bridgeCost = 2;
-var tunnelCost = 2;
-var policeCost = 5;
-var parkCost = 5;
-var portCost = 5;
-var airportCost = 5;
+//=================================================================== COMMANDS
 
-var game;
+/*** BUY ***/
 
-var politicsActive = false;
-var politicsPlan = new Set();
-var buildButton = document.getElementById("build");
-var politicsButton = document.getElementById("politics");
-var politicsButton1 = document.getElementById("politics1");
-var politicsButton2 = document.getElementById("politics2");
-var passButton = document.getElementById("pass");
-var politicsText = document.getElementById("politicsText");
-var politicsText1 = document.getElementById("politicsText1");
-var politicsText2 = document.getElementById("politicsText2");
-var helpText = document.getElementById("helpText");
-var hexagonGrid = null;
+function BuyCommand() {
+    this.paid = new Set();
+    this.hex = null;
+    this.player = ui.game.getCurrentPlayer();
+}
 
-politicsButton.disabled = true;
-passButton.disabled = true;
+BuyCommand.prototype.canExecute = function() {
+    return this.hex != null;
+}
+
+BuyCommand.prototype.click = function(hex) {
+
+    // Unselect
+    if (this.hex == hex) {
+	this.select(hex);
+	return "";
+    }
+
+    // Undo payment
+    if (this.paid.has(hex)) {
+	this.unpay(hex);
+
+	// Remove unreachable payments
+	var unreachables = new Array();
+	this.paid.forEach(function(paidHex) {
+	    if (!isReachable(paidHex, paidHex.grid,
+			     this.player.owned, this.paid)) {
+		unreachables.push(paidHex);
+	    }
+	});
+	var self = this;
+	unreachables.forEach(function(paidHex) {
+	    self.unpay(paidHex);
+	});
+
+	// Unselect target if it's unreachable
+	if (this.hex != null) {
+	    if (!isReachable(this.hex, this.hex.grid,
+			     this.player.owned, this.paid)) {
+		this.select(this.hex);
+	    }
+	}
+	return "";
+    }
+
+    // Give help for invalid clicks
+    if (hex.type == Hex.Type.WATER)
+	return "Water tiles are inaccessible.";
+    if (hex.type == Hex.Type.MOUNTAIN)
+	return "Mountain tiles are inaccessible.";
+    if (hex.building != Hex.Building.EMPTY &&
+	hex.owner == null)
+	return "Neutral buildings cannot be selected when buying land.";
+    if (this.player.owned.has(hex)) {
+	return "You already own this land.";
+    }
+
+    if (this.player.owned.size == 0) {
+	if (hex.building != Hex.Building.EMPTY) {
+	    return "Please choose an empty tile to enter the board.";
+	}
+	this.select(hex);
+	return "";
+    }
+
+    // Reachability check
+    var reachable = isReachable(this, this.grid, player.owned, player.paid);
+
+    if (reachable) {
+	if (hex.owner != null) {
+	    if (this.player.money <= this.paid.size)
+		return "You don't have enough money to pay for connection.";
+	    this.pay(hex);
+	} else {
+	    if (this.player.discs == 0)
+		return "You have no discs remaining.";
+	    this.select(hex);
+	}
+    } else {
+	return "Unreachable tile.";
+    }
+    return "";
+}
+
+BuyCommand.prototype.execute = function() {
+    this.hex.refresh();
+    this.player.discs--;
+    this.paid.forEach(function(paidHex) {
+	this.player.money--;
+	paidHex.owner.money++;
+    });
+}
+
+BuyCommand.prototype.abort = function() {
+    this.select(this.hex);
+    var self = this;
+    this.paid.forEach(function(paidHex) {
+	self.unpay(paidHex);
+    });
+}
+
+BuyCommand.prototype.pay = function(hex) {
+    this.paid.add(hex);
+    hex.highlight();
+}
+
+BuyCommand.prototype.unpay = function(hex) {
+    this.paid.delete(hex);
+    hex.refresh();
+}
+
+BuyCommand.prototype.select = function(hex) {
+
+    var old = this.hex;
+
+    if (old != hex) {
+	hex.building = Hex.Building.DISC;
+	hex.owner = this.player;
+	hex.refresh();
+	hex.highlight();
+	this.hex = hex;
+    } else {
+	this.hex = null;
+    }
+
+    // Unselect old selection
+    if (old != null) {
+	old.building = Hex.Building.EMPTY;
+	old.owner = null;
+	old.refresh();
+    }
+
+}
+
+/*** BUILD ***/
+
+function BuildCommand() {
+    this.plan = [null, null, null]; // res, com, ind
+    this.player = ui.game.getCurrentPlayer();
+    this.verified = false;
+}
+
+BuildCommand.prototype.canExecute = function() {
+    if (this.plan[0] == null && this.plan[1] == null &&
+	this.plan[2] == null)
+	return false;
+
+    return this.verified;
+}
+
+BuildCommand.prototype.click = function(hex) {
+
+    var index;
+    if (hex.type == Hex.Type.RESIDENCE) index = 0;
+    else if (hex.type == Hex.Type.COMMERCE) index = 1;
+    else index = 2;
+
+    // Unselect
+    if  (this.plan[index] == hex) {
+	this.verified = false;
+	this.plan[index] = null;
+	this.unselect(hex);
+	return updateCrime();
+    }
+
+    // Give help for invalid clicks
+    if (hex.type == Hex.Type.WATER)
+	return "Water tiles are inaccessible.";
+    if (hex.type == Hex.Type.MOUNTAIN)
+	return "Mountain tiles are inaccessible.";
+    if (hex.building != Hex.Building.EMPTY &&
+	hex.owner == null)
+	return "Neutral buildings cannot be selected when building.";
+    if (hex.building != Hex.Building.DISC && hex.owner == this.player)
+	return "You already have building here.";
+    if (!player.owned.has(this))
+	return "You don't own this tile.";
+
+    // Check that there are enough buildings
+    if (index == 0 && this.player.resHouses == 0)
+	return "You don't have any residences remaining.";
+    if (index == 1 && this.player.comHouses == 0)
+	return "You don't have any commerces remaining.";
+    if (index == 2 && this.player.indHouses == 0)
+	return "You don't have any industries remaining.";
+
+    // Check for illegal building combination
+    if (index == 1 && this.plan[2] != null)
+	return "You cannot build commerce, because you already have industry.";
+    if (index == 2 && this.plan[1] != null)
+	return "You cannot build industry, because you already have commerce.";
+
+    var newPlan = [this.plan[0], this.plan[1], this.plan[2]];
+    newPlan[index] = hex;
+
+    // Warn when there's not enough money
+    if (this.player.money < this.countCost(newPlan))
+	return "You don't have enough money to build this.";
+
+    // Warn when distance is too large when building 2
+    if (!this.rangeCheck(newPlan))
+	return "You don't have enough range for the connection.";
+
+    this.verified = false;
+    if (this.plan[index] != null) {
+	this.unselect(this.plan[index]);
+    }
+
+    this.plan[index] = hex;
+    hex.building = Hex.Building.HOUSE;
+
+    // Warn when crime tokens would run out
+    return this.updateCrime();
+}
+
+BuildCommand.prototype.execute = function() {
+    for (var i = 0; i < 3; i++) {
+	if (this.plan[i] != null) {
+	    this.plan[i].refresh();
+	    this.player.crimeTokens -= this.plan[i].crime;
+	}
+    }
+    if (this.plan[0] != null) this.player.resHouses--;
+    if (this.plan[1] != null) this.player.comHouses--;
+    if (this.plan[2] != null) this.player.indHouses--;
+
+    this.player.money -= this.countCost(this.plan);
+    this.player.usedDiscs++;
+
+    if (this.plan[0] != null)
+	if (ui.game.resPrice < 12) ui.game.resPrice++;
+    else
+	if (ui.game.resPrice > 4) ui.game.resPrice--;
+    if (this.plan[1] != null)
+	if (ui.game.comPrice < 12) ui.game.comPrice++;
+    else
+	if (ui.game.comPrice > 4) ui.game.comPrice--;
+    if (this.plan[2] != null)
+	if (ui.game.indPrice < 12) ui.game.indPrice++;
+    else
+	if (ui.game.indPrice > 4) ui.game.indPrice--;
+}
+
+BuildCommand.prototype.abort = function() {
+    this.verified = false;
+
+    if (this.plan[0] != null) this.unselect(this.plan[0]);
+    if (this.plan[1] != null) this.unselect(this.plan[1]);
+    if (this.plan[2] != null) this.unselect(this.plan[2]);
+}
+
+BuildCommand.prototype.unselect = function(hex) {
+    hex.building = Hex.Building.DISC;
+    hex.crime = 0;
+    hex.refresh();
+}
+
+BuildCommand.prototype.countCost = function(plan) {
+    var cost = 0;
+    if (plan[0] != null)
+	cost += ui.game.resPrice;
+    if (plan[1] != null)
+	cost += ui.game.comPrice;
+    if (plan[2] != null)
+	cost += ui.game.indPrice;
+    return cost;
+}
+
+BuildCommand.prototype.rangeCheck = function(plan) {
+    if (plan[0] != null) {
+	var distance = 0;
+	if (plan[1] != null)
+	    distance = bfs(plan[0], plan[1]);
+	if (plan[2] != null)
+	    distance = bfs(plan[0], plan[2]);
+	return distance != -1;
+    }
+    return true;
+}
+
+BuildCommand.prototype.updateCrime = function() {
+    var tokensNeeded = [0, 0, 0];
+    if (this.plan[0] != null)
+	tokensNeeded[0] = game.resCrime[this.player.resHouses];
+    if (this.plan[1] != null)
+	tokensNeeded[1] = game.comCrime[this.player.comHouses];
+    if (this.plan[2] != null)
+	tokensNeeded[2] = game.indCrime[this.player.indHouses];
+
+    if (this.plan[0] != null && this.plan[1] == null && this.plan[2] == null)
+	tokensNeeded[0]++;
+    if (this.plan[0] == null && this.plan[1] != null)
+	if (bfs(this.plan[1], "Airport") == -1)
+	    tokensNeeded[1]++;
+    if (this.plan[0] == null && this.plan[2] != null)
+	if (bfs(this.plan[2], "Port") == -1)
+	    tokensNeeded[2]++;
+
+    // Update visual crime tokens
+    for (var i = 0; i < 3; i++) {
+	if (this.plan[i] != null) {
+	    this.plan[i].crime = tokensNeeded[i];
+	    this.plan[i].refresh();
+	    this.plan[i].highlight();
+	}
+    }
+
+    // Warn when crime tokens would run out
+    var sum = tokensNeeded[0] + tokensNeeded[1] + tokensNeeded[2];
+    if (sum > this.player.crimeTokens)
+	return "Too much crime. You don't have enough crime tokens left.";
+
+    this.verified = true;
+    return "";
+}
+
+/*** POLITICS ***/
+
+function PoliticsCommand() {
+    this.plan = new Map(); // hex -> original building
+    this.player = ui.game.getCurrentPlayer();
+    this.bridge = false;
+    this.verified = false;
+}
+
+PoliticsCommand.prototype.canExecute = function() {
+    return this.verified;
+}
+
+// Check that hex1 and hex2 terrain matches
+// and it's either water or mountain.
+checkTerrain = function(hex1, hex2) {
+    if (hex1.type == hex2.type)
+	if (hex1.type == Hex.Type.WATER ||
+	    hex2.type == Hex.Type.MOUNTAIN)
+	    return true;
+    return false;
+}
+
+// Get a list of two tiles, which are sides
+// of the bridge, or null if a bridge cannot
+// be built between the given hexagons. Input
+// must be a sorted list of two tiles.
+getBridgeTiles = function(list) {
+
+    if (list.length != 2)
+	return null;
+
+    var parity = list[0] % 2 == 0;
+    var grid = list[0].grid;
+
+    // right
+    if (list[1].col == list[0].col + 2 &&
+	list[1].row == list[0].row) {
+	if (list[0].row != (parity ? 0 : (grid.rowCount - 1))) {
+	    var col = grid.columns[list[0].col + 1];
+	    var hex1 = col[list[0].row - (parity ? 1 : 0)];
+	    var hex2 = col[list[0].row + (parity ? 0 : 1)];
+	    if (checkTerrain(hex1, hex2))
+	        return [hex1, hex2];
+	}
+    }
+
+    if (list[1].col == list[0].col + 1) {
+
+	// top-right
+	if (list[1].row == list[0].row - (parity ? 2 : 1)) {
+	    if (list[0].row >= (parity ? 2 : 1)) {
+		var hex1 = grid.columns[list[0].col][list[0].row - 1];
+		var hex2 = grid.columns[list[1].col][list[1].row + 1];
+		if (checkTerrain(hex1, hex2))
+		    return [hex1, hex2];
+	    }
+	}
+
+	// bottom-right
+	if (list[1].row == list[0].row + (parity ? 1 : 2)) {
+	    if (list[0].row < grid.rowCount - (parity ? 1 : 2)) {
+		var hex1 = grid.columns[list[0].col][list[0].row + 1];
+		var hex2 = grid.columns[list[1].col][list[1].row - 1];
+		if (checkTerrain(hex1, hex2))
+		    return [hex1, hex2];
+	    }
+	}
+    }
+
+    return null;
+}
+
+checkNeutralDiscs = function(list) {
+    var result = true;
+    list.forEach(function(hex) {
+	if (hex.owner != null || hex.building != Hex.Building.DISC)
+	    result = false;
+    });
+    return result;
+}
+
+checkAirport = function(hex1, hex2, hex3) {
+    var result = false;
+    if (hex2.col == hex1.col + 1 && hex3.col == hex1.col + 2) {
+	if (hex1.col % 2 == 0) {
+	    result = (hex2.row == hex1.row - 1 && hex3.row == hex1.row - 1)
+		|| (hex2.row == hex1.row && hex3.row == hex1.row + 1);
+	} else {
+	    result = (hex2.row == hex1.row && hex3.row == hex1.row - 1)
+		|| (hex2.row == hex1.row + 1 && hex3.row == hex1.row + 1);
+	}
+    } else if (hex2.col == hex1.col && hex3.col == hex2.col) {
+	result = hex2.row == hex1.row + 1 && hex3.row == hex1.row + 2;
+    }
+    return result;
+}
+
+PoliticsCommand.prototype.click = function(hex) {
+
+    // Give help for invalid clicks
+    if (hex.type == Hex.Type.WATER)
+	return "Water tiles are inaccessible.";
+    if (hex.type == Hex.Type.MOUNTAIN)
+	return "Mountain tiles are inaccessible.";
+
+    this.verified = false;
+
+    // Select or unselect
+    if (this.plan.has(hex)) {
+
+	if (this.plan.size == 1 &&
+	    hex.building == Hex.Building.POLICE) {
+	    hex.building = Hex.Building.PARK;
+	    hex.refresh();
+	    hex.highlight();
+
+	    if (ui.game.parkCount == 0)
+		return "All Parks are already built.";
+	    if (ui.game.parkCost > this.player.money)
+		return "Not enough money to build Park.";
+
+	    this.verified = true;
+	    return "";
+	}
+
+	hex.building = this.plan.get(hex);
+	this.plan.delete(hex);
+	hex.refresh();
+    } else {
+	this.plan.set(hex, hex.building);
+    }
+
+    // Reset everything back to normal
+    var list = new Array();
+    this.plan.forEach(function(value, key, map) {
+	list.add(key);
+	key.building = value;
+	key.refresh();
+    });
+
+    list.sort(sorter);
+
+    // Refresh bridge away
+    this.clearBridge();
+
+    switch (list.length) {
+    case 1:
+	this.plan.set(hex, list[0].building);
+	if (checkNeutralDiscs(list)) {
+	    list[0].building = Hex.Building.POLICE;
+	}
+	list[0].refresh();
+	list[0].highlight();
+
+	if (ui.game.policeCount == 0)
+	    return "All Polices are already built.";
+	if (ui.game.policeCost > this.player.money)
+	    return "Not enough money to build Police.";
+	break;
+    case 2:
+	var tiles = getBridgeTiles(list);
+	var grid = list[0].grid;
+	if (tiles != null) {
+	    var exists = false;
+	    grid.bridges.forEach(function(bridge) {
+		// TODO: Could be simplified
+		if ((bridge[0] == list[0] && bridge[1] == list[1]) ||
+		    (bridge[1] == list[0] && bridge[0] == list[1])) {
+		    exists = true;
+		}
+	    });
+
+	    list[0].highlight();
+	    list[1].highlight();
+
+	    var isBridge = tiles[0].type = Hex.Type.WATER;
+	    if (!exists) {
+		grid.drawBridge(list[0], list[1]);
+		this.bridge = true;
+		if (isBridge && ui.game.bridgeCost > this.player.money)
+		    return "Not enough money for the bridge.";
+		if (!isBridge && ui.game.tunnelCost > this.player.money)
+		    return "Not enough money for the tunnel.";
+	    } else {
+		if (isBridge)
+		    return "Bridge already exists.";
+		else
+		    return "Tunnel already exists.";
+	    }
+	} else {
+	    var neighbors1 = list[0].getNeighbors();
+	    var neighbors2 = list[1].getNeighbors();
+	    var neighbors = false;
+	    var nextToWater = [false, false];
+	    neighbors1.forEach(function(hex) {
+		if (hex == list[1]) neighbors = true;
+		if (hex.type == Hex.Type.WATER) nextToWater[0] = true;
+	    });
+	    if (!neighbors)
+		return "To build a Port, choose neighboring tiles.";
+	    neighbors2.forEach(function(hex) {
+		if (hex.type == Hex.Type.WATER) nextToWater[1] = true;
+	    });
+	    if (!nextToWater[0] || !nextToWater[1])
+		return "To build a Port, both tiles must be next to water.";
+	    if (!checkNeutralDiscs(list))
+		return "Port can only be built on top of neutral discs.";
+
+	    list[0].building = Hex.Building.PORT;
+	    list[1].building = Hex.Building.PORT;
+	    grid.drawPort(list[0], list[1]);
+	    list[0].highlight();
+	    list[1].highlight();
+
+	    if (ui.game.portCount == 0)
+		return "All Ports are already built.";
+	    if (ui.game.portCost > this.player.money)
+		return "Not enough money for the Port.";
+	}
+	break;
+    case 3:
+        if (!checkAirport(list[0], list[1], list[2]))
+	    return "Airport must be built on 3 tiles, which for a straight line.";
+        if (!checkNeutralDiscs(list))
+	    return "Airport can only be built on top of neutral discs.";
+
+        list[0].building = Hex.Building.AIRPORT;
+        list[1].building = Hex.Building.AIRPORT;
+        list[2].building = Hex.Building.AIRPORT;
+        grid.drawAirport(list[0], list[1], list[2]);
+        list[0].highlight();
+        list[1].highlight();
+        list[2].highlight();
+
+        if (ui.game.airportCount == 0)
+	    return "All Airports are already built.";
+        if (ui.game.airportCost > this.player.money)
+	    return "Not enough money for the Airport.";
+
+        break;
+    default:
+        return "Select 1 tile to build Police or Park. Select 2 tiles to build " +
+	    "Bridge, Tunnel or Port. Select 3 tiles to build Airport.";
+    }
+    this.verified = true;
+    return "";
+}
+
+PoliticsCommand.prototype.clearBridge = function() {
+    if (this.bridge) {
+	var tiles = getBridgeTiles(list);
+	if (tiles != null) {
+	    tiles[0].refresh();
+	    tiles[1].refresh();
+	}
+    }
+    this.bridge = false;
+}
+
+PoliticsCommand.prototype.execute = function() {
+    var list = new Array();
+    this.plan.forEach(function(value, key, map) {
+	list.add(key);
+	key.refresh();
+    });
+    list.sort(sorter);
+    if (!this.bridge) {
+	switch (list[0].building) {
+	case Hex.Building.POLICE:
+	    ui.game.policeCount--;
+	    this.player.money -= ui.game.policeCost;
+	    break;
+	case Hex.Building.PARK:
+	    ui.game.parkCount--;
+	    this.player.money -= ui.game.parkCost;
+	    break;
+	case Hex.Building.PORT:
+	    ui.game.portCount--;
+	    this.player.money -= ui.game.portCost;
+	    list[0].grid.drawPort(list[0], list[1]);
+	    break;
+	case Hex.Building.AIRPORT:
+	    ui.game.airportCount--;
+	    this.player.money -= ui.game.airportCost;
+	    list[0].grid.drawPort(list[0], list[1], list[2]);
+	    break;
+	}
+    }
+}
+
+PoliticsCommand.prototype.abort = function() {
+    this.verified = false;
+    this.clearBridge();
+
+    this.plan.forEach(function(value, key, map) {
+	key.building = value;
+	key.refresh();
+    });
+    this.plan.clear();
+}
+
+/*** SELL ***/
+
+function SellCommand() {
+    
+}
+
+SellCommand.prototype.canExecute = function() {
+    return true;
+}
+
+SellCommand.prototype.click = function(hex) {
+
+}
+
+SellCommand.prototype.execute = function() {
+
+}
+
+SellCommand.prototype.abort = function() {
+    this.verified = false;
+
+}
+
+//================= UI
+
+UI.Action = {
+    NOTHING : 0,
+    BUY : 1,
+    BUILD : 2,
+    POLITICS : 3,
+    SELL : 4
+}
+
+function UI() {
+    this.game = null;
+    this.grid = null;
+
+    // Currently selected action
+    this.action = null;
+
+    // Set of selected hexagons
+    this.command = null;
+
+    this.startButton = document.getElementById("startButton");
+    this.buyButton = document.getElementById("buyButton");
+    this.buildButton = document.getElementById("buildButton");
+    this.politicsButton = document.getElementById("politicsButton");
+    this.loanButton = document.getElementById("loanButton");
+    this.executeButton = document.getElementById("executeButton");
+    this.passButton = document.getElementById("passButton");
+    this.helpText = document.getElementById("helpText");
+
+    this.startButton.disabled = false;
+    this.buyButton.disabled = true;
+    this.buildButton.disabled = true;
+    this.politicsButton.disabled = true;
+    this.loanButton.disabled = true;
+    this.executeButton.disabled = true;
+    this.passButton.disabled = true;
+}
+
+UI.prototype.click = function(action, command) {
+    // Clear the old plan
+    if (this.command != null) {
+	this.command.abort();
+    }
+
+    if (this.action == action) {
+	this.action = UI.Action.NOTHING;
+	this.command = null;
+    } else {
+	this.action = action;
+	this.command = command;
+    }
+
+    this.refreshButtons();
+}
+
+UI.prototype.click = function(hex) {
+
+    if (this.command != null) {
+	var msg = this.command.click(hex);
+	this.helpText.innerHTML = msg;
+    } else {
+	this.helpText.innerHTML = "Select an action before clicking on the map.";
+    }
+
+    this.validateButtons();
+}
+
+UI.prototype.refreshButtons = function() {
+
+    this.validateButtons();
+
+    this.buyButton.backgroundColor = null;
+    this.buildButton.backgroundColor = null;
+    this.politicsButton.backgroundColor = null;
+
+    var player = this.game.getCurrentPlayer();
+    var color = player.color;
+
+    switch (this.action) {
+    case UI.Action.BUY:
+	this.buyButton.backgroundColor = color;
+	break;
+    case UI.Action.BUILD:
+	this.buildButton.backgroundColor = color;
+	break;
+    case UI.Action.POLITICS:
+	this.politicsButton.backgroundColor = color;
+	break;
+    }
+}
+
+UI.prototype.validateButtons = function() {
+
+    switch (this.action) {
+    case UI.Action.BUY:
+    case UI.Action.BUILD:
+    case UI.Action.POLITICS:
+    case UI.Action.EMPTY:
+	this.buyButton.disabled = !validateDiscs();
+	this.buildButton.disabled = false;
+	this.politicsButton.disabled = false;
+	this.loanButton.disabled = !this.validateLoan();
+	this.executeButton.disabled = !this.validateExecute();
+	this.passButton.disabled = false;
+	break;
+    case UI.Action.SELL:
+	this.buyButton.disabled = true;
+	this.buildButton.disabled = true;
+	this.politicsButton.disabled = true;
+	this.loanButton.disabled = true;
+	this.executeButton.disabled = false;
+	this.passButton.disabled = true;
+	break;
+    }
+
+}
+
+UI.prototype.validateExecute = function() {
+
+    if (this.action == UI.Action.EMPTY) return false;
+
+    if (this.command != null) {
+	return this.command.canExecute();
+    }
+    return false;
+}
+
+UI.prototype.validateDiscs = function() {
+    var player = this.game.getCurrentPlayer();
+    return player.discs > 0;
+}
 
 function log(msg) {
     setTimeout(function() {
@@ -30,206 +783,36 @@ function log(msg) {
     }, 0);
 };
 
-start = function() {
-    if (politicsActive) {
-	togglePolitics();
+startClick = function() {
+    ui.game = new Game(2);
+    ui.action = UI.Action.NOTHING;
+    if (ui.grid == null) {
+	ui.grid = new HexagonGrid("HexCanvas", 30);
     }
-
-    game = new Game(2);
-    if (hexagonGrid == null) {
-	hexagonGrid = new HexagonGrid("HexCanvas", 30);
-    }
-    hexagonGrid.initialize(7, 10, 5, 5, false);
+    ui.grid.initialize(7, 10, 5, 5, false);
 }
 
-build = function() {
-    var player = game.getCurrentPlayer();
-    var plan = player.plan;
-    var it = plan[Symbol.iterator]();    
-    if (plan.size == 1) {
-	var hex = it.next().value;
-	if (hex.type == Hex.Type.COMMERCE) {
-	    hex.crime = comCrime[player.comHouses];
-	    if (bfs(hex, "Airport") == -1) hex.crime++;
-	    player.money -= game.comPrice;
-	    player.comHouses--;
-	    if (game.comPrice < 12) game.comPrice++;
-	    if (game.indPrice > 4) game.indPrice--;
-	    if (game.resPrice > 4) game.resPrice--;
-	}
-	if (hex.type == Hex.Type.INDUSTRY) {
-	    hex.crime = indCrime[player.indHouses];
-	    if (bfs(hex, "Port") == -1) hex.crime++;
-	    player.money -= game.indPrice;
-	    player.indHouses--;
-	    if (game.indPrice < 12) game.indPrice++;
-	    if (game.comPrice > 4) game.comPrice--;
-	    if (game.resPrice > 4) game.resPrice--;
-	}
-	if (hex.type == Hex.Type.RESIDENCE) {
-	    hex.crime = resCrime[player.resHouses] + 1;
-	    player.money -= game.resPrice;
-	    player.resHouses--;
-	    if (game.resPrice < 12) game.resPrice++;
-	    if (game.indPrice > 4) game.indPrice--;
-	    if (game.comPrice > 4) game.comPrice--;
-	}
-	plan.clear();
-	hex.building = Hex.Building.HOUSE;
-	hex.refresh();
-	game.endTurn();
-    }
-    if (plan.size == 2) {
-	var hex1 = it.next().value;
-	var hex2 = it.next().value;
-	var res = false;
-	var com = false;
-	var ind = false;
-	if (hex1.type == Hex.Type.COMMERCE || hex2.type == Hex.Type.COMMERCE) {
-	    if (hex1.type == Hex.Type.COMMERCE)
-		hex1.crime = comCrime[player.comHouses];
-	    else
-		hex2.crime = comCrime[player.comHouses];
-	    player.money -= game.comPrice;
-	    player.comHouses--;
-	    if (game.comPrice < 12) game.comPrice++;
-	    com = true;
-	}
-	if (hex1.type == Hex.Type.INDUSTRY || hex2.type == Hex.Type.INDUSTRY) {
-	    if (hex1.type == Hex.Type.INDUSTRY)
-		hex1.crime = indCrime[player.indHouses];
-	    else
-		hex2.crime = indCrime[player.indHouses];
-	    player.money -= game.indPrice;
-	    player.indHouses--;
-	    if (game.indPrice < 12) game.indPrice++;
-	    ind = true;
-	}
-	if (hex1.type == Hex.Type.RESIDENCE || hex2.type == Hex.Type.RESIDENCE) {
-	    if (hex1.type == Hex.Type.RESIDENCE)
-		hex1.crime = resCrime[player.resHouses];
-	    else
-		hex2.crime = resCrime[player.resHouses];
-	    player.money -= game.resPrice;
-	    player.resHouses--;
-	    if (game.resPrice < 12) game.resPrice++;
-	    res = true;
-	}
-	if (!res && game.resPrice > 4) game.resPrice--;
-	if (!com && game.comPrice > 4) game.comPrice--;
-	if (!ind && game.indPrice > 4) game.indPrice--;
-	plan.clear();
-	hex1.building = Hex.Building.HOUSE;
-	hex2.building = Hex.Building.HOUSE;
-	hex1.refresh();
-	hex2.refresh();
-	game.endTurn();
-    }
-    buildButton.disabled = true;
+buyClick = function() {
+    ui.click(UI.Action.BUY, new BuyCommand());
 }
 
-pass = function() {
-    if (politicsActive) {
-	togglePolitics();
-    }
-    game.pass();
+buildClick = function() {
+    ui.click(UI.Action.BUILD, new BuildCommand());
 }
 
-togglePolitics = function() {
-    if (politicsActive) {
-	politicsButton1.hidden = true;
-	politicsButton2.hidden = true;
-	politicsPlan.forEach(function(hex) {
-	    hex.refresh();
-	});
-    }
-    politicsPlan.clear();
-    politicsActive = !politicsActive;
-    if (politicsActive) {
-	politicsButton.style.backgroundColor = "#f66";
-    } else {
-	politicsButton.style.backgroundColor = null;
-    }
+politicsClick = function() {
+    ui.click(UI.Action.POLITICS, new PoliticsCommand());
 }
 
-politics1 = function() {
-    executePolitics(politicsText1.innerHTML);
+loanClick = function() {
 }
 
-politics2 = function() {
-    executePolitics(politicsText2.innerHTML);
+passClick = function() {
+
 }
 
-executePolitics = function(type) {
-    var it = politicsPlan[Symbol.iterator]();
-    var player = game.getCurrentPlayer();
-    switch (type) {
-    case "Police":
-	var hex = it.next().value;
-	player.money -= policeCost;
-	game.policeCount--;
-	hex.building = Hex.Building.POLICE;
-	hex.type = Hex.Type.LAND;
-	hex.refresh();
-	break;
-    case "Park":
-	var hex = it.next().value;
-	player.money -= parkCost;
-	game.parkCount--;
-	hex.building = Hex.Building.PARK;
-	hex.type = Hex.Type.LAND;
-	hex.refresh();
-	break;
-    case "Bridge":
-    case "Tunnel":
-	player.money -= bridgeCost;
-	var l = new Array();
-	l.push(it.next().value);
-	l.push(it.next().value);
-	l.sort(sorter);
-	hexagonGrid.drawBridge(l[0], l[1]);
-	hexagonGrid.bridges.push(l);
-	l[0].refresh();
-	l[1].refresh();
-	break;
-    case "Port":
-	player.money -= portCost;
-	game.portCount--;
-	var l = new Array();
-	l.push(it.next().value);
-	l.push(it.next().value);
-	l.sort(sorter);
-	l[0].building = Hex.Building.PORT;
-	l[1].building = Hex.Building.PORT;
-	l[0].type = Hex.Type.LAND;
-	l[1].type = Hex.Type.LAND;
-	l[0].refresh();
-	l[1].refresh();
-	hexagonGrid.drawPort(l[0], l[1]);
-	break;
-    case "Airport":
-	player.money -= airportCost;
-	game.airportCount--;
-	var l = new Array();
-	l.push(it.next().value);
-	l.push(it.next().value);
-	l.push(it.next().value);
-	l.sort(sorter);
-	l[0].building = Hex.Building.AIRPORT;
-	l[1].building = Hex.Building.AIRPORT;
-	l[2].building = Hex.Building.AIRPORT;
-	l[0].type = Hex.Type.LAND;
-	l[1].type = Hex.Type.LAND;
-	l[2].type = Hex.Type.LAND;
-	l[0].refresh();
-	l[1].refresh();
-	l[2].refresh();
-	hexagonGrid.drawAirport(l[0], l[1], l[2]);
-	break;
-    }
-    politicsPlan.clear();
-    togglePolitics();
-    game.endTurn();
+executeClick = function() {
+    ui.action.execute();
 }
 
 //=============================================================== Hexagon Grid
@@ -610,15 +1193,7 @@ HexagonGrid.prototype.clickEvent = function(e) {
     if (tile.column >= 0 && tile.row >= 0 &&
 	tile.column < this.colCount && tile.row < this.rowCount) {
 	var hex = this.columns[tile.column][tile.row];
-	var player = game.getCurrentPlayer();
-	hex.click(player);
-	if (player.paid.size != 0 || player.plan.size != 0) {
-	    politicsButton.disabled = true;
-	    passButton.disabled = true;
-	} else {
-	    politicsButton.disabled = false;
-	    passButton.disabled = false;
-	}
+	hex.click();
     }
 };
 
@@ -709,82 +1284,9 @@ Hex.prototype.highlight = function() {
     this.draw("rgba(255,255,255,0.5)");
 };
 
-Hex.prototype.click = function(player) {
-    if (this.type == Hex.Type.WATER || this.type == Hex.Type.MOUNTAIN) {
-	helpText.innerHTML = "Water and mountain tiles are inaccessible.";
-	return;
-    }
-
-    if (this.building == Hex.Building.PORT ||
-	this.building == Hex.Building.AIRPORT) {
-	helpText.innerHTML = "Port and Airport cannot be selected.";
-	return;
-    }
-
-    if (politicsActive) {
-	this.doPolitics(player);
-	return;
-    }
-
-    if (player.owned.size == 0) {
-	if (this.building != Hex.Building.EMPTY) {
-	    helpText.innerHTML =
-		"Please choose an empty tile to enter the board.";
-	    return;
-	}
-	player.buy(this);
-	return;
-    }
-
-    if (player.owned.has(this)) {
-	if (this.type == Hex.Type.LAND) {
-	    helpText.innerHTML =
-		"Player buildings cannot be built here. "
-		+ "Use Politics button for neutral buildings.";
-	    return;
-	}
-	if (player.paid.size == 0) {
-	    if (!player.plan.has(this) &&
-		this.building == Hex.Building.HOUSE) {
-		helpText.innerHTML =
-		    "You already have a building here.";
-		return;
-	    } else {
-		player.build(this);
-	    }
-	} else {
-	    helpText.innerHTML =
-		"You must unselect paid areas before you can build.";
-	}
-	return;
-    }
-
-    if (this.owner == null && this.building != Hex.Building.EMPTY) {
-	if (this.building == Hex.Building.DISC) {
-	    helpText.innerHTML =
-		"Use Politics button for building neutral buildings.";
-	}
-	return;
-    }
-
-    if (player.plan.size != 0) {
-	helpText.innerHTML = "Building in process, cannot buy land now.";
-	return;
-    }
-
-    // Reachability check
-    var reachable = this.isReachable(player);
-
-    if (reachable) {
-	if (this.owner != null) {
-	    player.pay(this);
-	} else {
-	    player.buy(this);
-	}
-    } else {
-	helpText.innerHTML = "Unreachable area.";
-    }
-};
+Hex.prototype.click = function() {
+    ui.click(this);
+}
 
 sorter = function(a, b) {
     if (a.col == b.col) {
@@ -793,170 +1295,7 @@ sorter = function(a, b) {
     return a.col - b.col;
 };
 
-Hex.prototype.doPolitics = function(player) {
-    if (politicsPlan.has(this)) {
-	politicsPlan.delete(this);
-	this.refresh();
-    } else {
-	politicsPlan.add(this);
-	this.highlight();
-    }
-    var it = politicsPlan[Symbol.iterator]();
-    var hex1;
-    var hex2;
-    var hex3;
-    politicsButton1.hidden = true;
-    politicsButton2.hidden = true;
-    switch (politicsPlan.size) {
-    case 1:
-	hex1 = it.next().value;
-	if (hex1.building == Hex.Building.DISC && hex1.owner == null) {
-	    var policeOK = game.policeCount > 0 && player.money >= policeCost;
-	    var parkOK = game.parkCount > 0 && player.money >= parkCost;
-	    if (policeOK) {
-		politicsText1.innerHTML = "Police";
-		politicsButton1.hidden = false;
-	    }
-	    if (parkOK) {
-		politicsText2.innerHTML = "Park";
-		politicsButton2.hidden = false;
-	    }
-	    if (!parkOK && !policeOK) {
-		helpText.innerHTML = "Cannot build Park or Police. ";
-		if (player.money < parkCost) {
-		    helpText.innerHTML += "Not enough money.";
-		} else {
-		    helpText.innerHTML += "No buildings remaining.";
-		}
-	    }
-	}
-	break;
-    case 2:
-	hex1 = it.next().value;
-	hex2 = it.next().value;
-	var neighbors1 = hex1.getNeighbors();
-	var neighbors2 = hex2.getNeighbors();
-	var notNeighbors = true;
-	neighbors1.forEach(function(hex) {
-	    if (hex == hex2) notNeighbors = false;
-	});
-	if (notNeighbors) {
-	    var commonNeighbors = new Array();
-	    neighbors1.forEach(function(hex) {
-		for (var i = 0; i < neighbors2.length; i++) {
-		    if (neighbors2[i] == hex) commonNeighbors.push(hex);
-		}
-	    });
-	    if (commonNeighbors.length == 2) {
-		if (commonNeighbors[0].type == commonNeighbors[1].type) {
-		    var exists = false;
-		    this.grid.bridges.forEach(function(bridge) {
-			if ((bridge[0] == hex1 && bridge[1] == hex2) ||
-			    (bridge[1] == hex1 && bridge[0] == hex2)) {
-			    exists = true;
-			}
-		    });
-		    if (exists) {
-			helpText.innerHTML = "Bridge or Tunnel already exists.";
-		    }
-		    else if (commonNeighbors[0].type == Hex.Type.WATER) {
-			if (player.money >= bridgeCost) {
-			    politicsText1.innerHTML = "Bridge";
-			    politicsButton1.hidden = false;
-			} else {
-			    helpText.innerHTML = "Not enough money for Bridge.";
-			}
-		    } else if (commonNeighbors[0].type == Hex.Type.MOUNTAIN) {
-			if (player.money >= tunnelCost) {
-			    politicsText1.innerHTML = "Tunnel";
-			    politicsButton1.hidden = false;
-			} else {
-			    helpText.innerHTML = "Not enough money for Tunnel.";
-			}
-		    }
-		}
-	    }
-	} else {
-	    var nextToWater = false;
-	    neighbors1.forEach(function(hex) {
-		if (hex.type == Hex.Type.WATER) nextToWater = true;
-	    });
-	    if (nextToWater) {
-		nextToWater = false;
-		neighbors2.forEach(function(hex) {
-		    if (hex.type == Hex.Type.WATER) nextToWater = true;
-		});
-		if (nextToWater) {
-		    if (hex1.building == Hex.Building.DISC &&
-			hex1.owner == null &&
-			hex2.building == Hex.Building.DISC &&
-			hex2.owner == null) {
-			// Port is only possible when there are two
-			// neutral discs next to each other and both
-			// are adjacent to water.
-			if (game.portCount == 0) {
-			    helpText.innerHTML = "No Port buildings remaining.";
-			} else if (player.money >= portCost) {
-			    politicsText1.innerHTML = "Port";
-			    politicsButton1.hidden = false;
-			} else {
-			    helpText.innerHTML = "Not enough money for Port.";
-			}
-		    }
-		}
-	    }
-	}
-	break;
-    case 3:
-	hex1 = it.next().value;
-	hex2 = it.next().value;
-	hex3 = it.next().value;
-	var l = new Array();
-	l.push(hex1);
-	l.push(hex2);
-	l.push(hex3);
-	l.sort(sorter);
-	hex3 = l.pop();
-	hex2 = l.pop();
-	hex1 = l.pop();
-	var result = false;
-	if (hex2.col == hex1.col + 1 && hex3.col == hex1.col + 2) {
-	    if (hex1.col % 2 == 0) {
-		result = (hex2.row == hex1.row - 1 && hex3.row == hex1.row - 1)
-		    || (hex2.row == hex1.row && hex3.row == hex1.row + 1);
-	    } else {
-		result = (hex2.row == hex1.row && hex3.row == hex1.row - 1)
-		    || (hex2.row == hex1.row + 1 && hex3.row == hex1.row + 1);
-	    }
-	} else if (hex2.col == hex1.col && hex3.col == hex2.col) {
-	    result = hex2.row == hex1.row + 1 && hex3.row == hex1.row + 2;
-	}
-	if (result) {
-	    if (hex1.building == Hex.Building.DISC &&
-		hex1.owner == null &&
-		hex2.building == Hex.Building.DISC &&
-		hex2.owner == null &&
-	        hex3.building == Hex.Building.DISC &&
-	        hex3.owner == null) {
-		// Airport is only possible when there are
-		// 3 neutral discs in a row.
-		if (game.airportCount == 0) {
-		    helpText.innerHTML = "No Airport buildings remaining.";
-		} else if (player.money >= airportCost) {
-		    politicsText1.innerHTML = "Airport";
-		    politicsButton1.hidden = false;
-		} else {
-		    helpText.innerHTML = "Not enough money for Airport.";
-		}
-	    }
-	}
-	break;
-    default:
-	break;
-    }
-};
-
-addWork = function(hex, target, visited, work, player) {
+addWork = function(hex, target, visited, work, paid) {
     if (!visited.has(hex)) {
 	if (hex == target) {
 	    return true;
@@ -966,7 +1305,7 @@ addWork = function(hex, target, visited, work, player) {
 	    visited.add(hex);
 	    work.push(hex);
 	}
-	if (player.paid.has(hex)) {
+	if (paid.has(hex)) {
 	    visited.add(hex);
 	    work.push(hex);
 	}
@@ -974,12 +1313,11 @@ addWork = function(hex, target, visited, work, player) {
     return false;
 }
 
-Hex.prototype.isReachable = function(player) {
+isReachable = function(hex, grid, owned, paid) {
     var visited = new Set();
     var work = new Array();
     var reachable = false;
-    var self = this;
-    player.owned.forEach(function(hex) {
+    owned.forEach(function(hex) {
 	visited.add(hex);
 	work.push(hex);
     });
@@ -988,16 +1326,16 @@ Hex.prototype.isReachable = function(player) {
 	var neighbors = h.getNeighbors();
 	neighbors.forEach(function(hex) {
 	    if (reachable) return;
-	    reachable = addWork(hex, self, visited, work, player);
+	    reachable = addWork(hex, hex, visited, work, paid);
 	});
 	for (var i = 0; i < this.grid.bridges.length; i++) {
 	    if (reachable) return true;
-	    if (this.grid.bridges[i][0] == h) {
+	    if (grid.bridges[i][0] == h) {
 		reachable = addWork(
-		    this.grid.bridges[i][1], self, visited, work, player);
-	    } else if (this.grid.bridges[i][1] == h) {
+		    grid.bridges[i][1], hex, visited, work, paid);
+	    } else if (grid.bridges[i][1] == h) {
 		reachable = addWork(
-		    this.grid.bridges[i][0], self, visited, work, player);
+		    grid.bridges[i][0], hex, visited, work, paid);
 	    }
 	}
 	if (reachable) return true;
@@ -1049,179 +1387,35 @@ var resIncome = [8, 7, 6, 5, 4, 3, 2, 1, 0];
 var comIncome = [9, 6, 4, 2, 0];
 var indIncome = [11, 8, 5, 3, 0];
 
-var resCrime = [0, 1, 1, 1, 1, 0, 0, 0];
-var comCrime = [0, 2, 1, 1, 0];
-var indCrime = [0, 2, 2, 1, 1];
+var initialMoney = 30;
+var initialRange = 3;
+var discsTotal = 10;
+var crimeTotal = 10;
+var baseIncome = -5;
 
 function Player(color) {
     this.owned = new Set();
     this.paid = new Set();
     this.plan = new Set();
     this.color = color;
-    this.money = 100;
-    this.range = 3;
-    this.discs = 10;
+    this.money = initialMoney;
+    this.range = initialRange;
+    this.discs = discsTotal;
+    this.loans = 0;
     this.crimeTokens = 10;
     this.resHouses = 7;
     this.comHouses = 4;
     this.indHouses = 4;
 };
 
-Player.prototype.buy = function(hex) {
-    this.owned.add(hex);
-    this.paid.forEach(function(hex) {
-	hex.refresh();
-    });
-    this.paid.clear();
-    hex.owner = this;
-    hex.building = Hex.Building.DISC;
-    hex.refresh();
-    game.endTurn();
-};
-
-Player.prototype.pay = function(hex) {
-    if (this.paid.has(hex)) {
-	// Undo payment
-	this.paid.delete(hex);
-	hex.refresh();
-
-	// Remove unreachable payments
-	var self = this;
-	var unreachables = new Array();
-	this.paid.forEach(function(paidHex) {
-	    if (!paidHex.isReachable(self)) {
-		unreachables.push(paidHex);
-	    }
-	});
-	unreachables.forEach(function(paidHex) {
-	    self.paid.delete(paidHex);
-	    paidHex.refresh();
-	});
-	return;
-    }
-    this.paid.add(hex);
-    hex.highlight();
-};
-
-Player.prototype.build = function(hex) {
-    if (this.plan.has(hex)) {
-	// Undo building
-	this.plan.delete(hex);
-	hex.building = Hex.Building.DISC;
-	hex.refresh();
-    } else {
-	this.plan.add(hex);
-	hex.building = Hex.Building.HOUSE;
-	hex.refresh();
-	hex.highlight();
-    }
-
-    var it = this.plan[Symbol.iterator]();
-    if (this.plan.size == 1) {
-	var hex = it.next().value;
-	var connection = false;
-	var oost;
-	var crimeTokensNeeded = 0;
-	if (hex.type == Hex.Type.COMMERCE) {
-	    if (this.comHouses == 0) {
-		helpText.innerHTML = "No commerces left.";
-		buildButton.disabled = true;
-		return;
-	    }
-	    var distance = bfs(hex, "Airport");
-	    connection = distance != -1;
-	    cost = game.comPrice;
-	    crimeTokensNeeded = comCrime[this.comHouses];
-	} else if (hex.type == Hex.Type.INDUSTRY) {
-	    if (this.indHouses == 0) {
-		helpText.innerHTML = "No industries left.";
-		buildButton.disabled = true;
-		return;
-	    }
-	    var distance = bfs(hex, "Port");
-	    connection = distance != -1;
-	    cost = game.indPrice;
-	    crimeTokensNeeded = indCrime[this.indHouses];
-	} else {
-	    if (this.resHouses == 0) {
-		helpText.innerHTML = "No residences left.";
-		buildButton.disabled = true;
-		return;
-	    }
-	    cost = game.resPrice;
-	    crimeTokensNeeded = resCrime[this.resHouses];
-	}
-	if (this.money < cost) {
-	    helpText.innerHTML = "Not enough money.";
-	    buildButton.disabled = true;
-	    return;
-	}
-	if (!connection) crimeTokensNeeded++;
-	if (crimeTokensNeeded > this.crimeTokens) {
-	    helpText.innerHTML = "Too much crime.";
-	    return;
-	}
-	buildButton.disabled = false;
-	// OK
-    } else if (this.plan.size == 2) {
- 	var hex1 = it.next().value;
-	var hex2 = it.next().value;
-	if (hex1.type == hex2.type ||
-	    (hex1.type == Hex.Type.COMMERCE && hex2.type == Hex.Type.INDUSTRY) ||
-	    (hex1.type == Hex.Type.INDUSTRY && hex2.type == Hex.Type.COMMERCE)) {
-	    helpText.innerHTML = "Please select residence + commerce or residence + industry to build.";
-	    buildButton.disabled = true;
-	    return;
-	}
-	var cost = 0;
-	var crimeTokensNeeded = 0;
-	if (hex1.type == Hex.Type.RESIDENCE || hex2.type == Hex.Type.RESIDENCE) {
-	    if (this.resHouses == 0) {
-		helpText.innerHTML = "No residences left.";
-		buildButton.disabled = true;
-		return;
-	    }
-	    cost += game.resPrice;
-	    crimeTokensNeeded += resCrime[this.resHouses];
-	}
-	if (hex1.type == Hex.Type.COMMERCE || hex2.type == Hex.Type.COMMERCE) {
-	    if (this.comHouses == 0) {
-		helpText.innerHTML = "No commerces left.";
-		buildButton.disabled = true;
-		return;
-	    }
-	    cost += game.comPrice;
-	    crimeTokensNeeded += comCrime[this.comHouses];
-	}
-	if (hex1.type == Hex.Type.INDUSTRY || hex2.type == Hex.Type.INDUSTRY) {
-	    if (this.indHouses == 0) {
-		helpText.innerHTML = "No industries left.";
-		buildButton.disabled = true;
-		return;
-	    }
-	    cost += game.indPrice;
-	    crimeTokensNeeded += indCrime[this.indHouses];
-	}
-	if (this.money < cost) {
-	    helpText.innerHTML = "Not enough money.";
-	    buildButton.disabled = true;
-	    return;
-	}
-	if (crimeTokensNeeded > this.crimeTokens) {
-	    helpText.innerHTML = "Too much crime.";
-	    return;
-	}
-	if (bfs(hex1, hex2) == -1) {
-	    helpText.innerHTML = "Not enough range for the distance.";
-	    buildButton.disabled = true;
-	    return;
-	}
-	buildButton.disabled = false;
-	// OK
-    } else {
-	buildButton.disabled = true;
-    }
-};
+Player.prototype.spit = function() {
+    var result = "";
+    result += "Discs: " + this.discs;
+    result += " Loans: " + this.loans;
+    result += " Used Discs: " + (discsTotal - this.discs - this.loans);
+    result += " Income: " + (baseIncome + this.discs + resIncome[this.resHouses] + comIncome[this.comHouses] + indIncome[this.indHouses] - crimeTotal + this.crimeTokens);
+    return result;
+}
 
 bfsWork = function(hex, visited, work) {
     if (hex.building != Hex.Building.EMPTY) {
@@ -1318,16 +1512,25 @@ function Game(playerCount) {
     this.resPrice = 4;
     this.comPrice = 12;
     this.indPrice = 8;
+
+    this.bridgeCost = 2;
+    this.tunnelCost = 2;
+    this.policeCost = 10;
+    this.parkCost = 5;
+    this.portCost = 5;
+    this.airportCost = 5;
+
+    this.resCrime = [0, 1, 1, 1, 1, 0, 0, 0];
+    this.comCrime = [0, 2, 1, 1, 0];
+    this.indCrime = [0, 2, 2, 1, 1];
 }
 
 Game.prototype.endTurn = function() {
-    helpText.innerHTML = "";
     this.currentPlayerIndex++;
     this.currentPlayerIndex %= this.activePlayers.length;
 }
 
 Game.prototype.pass = function() {
-    helpText.innerHTML = "";
     if (this.activePlayers.length == this.players.length) {
 	this.firstPass = this.currentPlayerIndex;
     }

@@ -4,33 +4,30 @@
   </head>
   <body>
     <p>
-      <button id="start" type="button" onclick="start()">
+      <button id="startButton" type="button" onclick="startClick()">
 	<p>New Game</p>
       </button>
-      <button id="build" type="button" onclick="build()" disabled="true">
+      <button id="buyButton" type="button" onclick="buyClick()" disabled="true">
 	<p>Build</p>
       </button>
-      <button id="politics" type="button" onclick="togglePolitics()" disabled="true">
-	<p id="politicsText">Politics</p>
+      <button id="buildButton" type="button" onclick="buildClick()" disabled="true">
+	<p>Build</p>
       </button>
-      <button id="loan" type="button" onclick="loan()" disabled="true">
+      <button id="politicsButton" type="button" onclick="politicsClick()" disabled="true">
+	<p>Politics</p>
+      </button>
+      <button id="loanButton" type="button" onclick="loanClick()" disabled="true">
 	<p>Take loan</p>
       </button>
-      <button id="repay" type="button" onclick="repay()" disabled="true">
-	<p>Pay loan</p>
+      <button id="executeButton" type="button" onclick="executeClick()" disabled="true">
+	<p>Execute</p>
       </button>
-      <button id="pass" type="button" onclick="pass()">
+      <button id="passButton" type="button" onclick="passClick()" disabled="true">
 	<p>Pass</p>
       </button>
-      <button id="politics1" type="button" onclick="politics1()" hidden="true">
-	<p id="politicsText1">Text</p>
-      </button>
-      <button id="politics2" type="button" onclick="politics2()" hidden="true">
-	  <p id="politicsText2">Text</p>
-      </button>
     </p>
-    <canvas id="HexCanvas" width="1000" height="700"></canvas>
     <p id="helpText"></p>
+    <canvas id="HexCanvas" width="1000" height="400"></canvas>
     <script src="hexagon.js"></script>
   </body>
 </html>
