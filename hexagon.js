@@ -28,12 +28,12 @@ BuyCommand.prototype.click = function(hex) {
 
 	// Remove unreachable payments
 	var unreachables = new Array();
+	var self = this;
 	this.paid.forEach(function(paidHex) {
-	    if (!isReachable(paidHex, this.player.owned, this.paid)) {
+	    if (!isReachable(paidHex, self.player.owned, self.paid)) {
 		unreachables.push(paidHex);
 	    }
 	});
-	var self = this;
 	unreachables.forEach(function(paidHex) {
 	    self.unpay(paidHex);
 	});
@@ -68,7 +68,7 @@ BuyCommand.prototype.click = function(hex) {
     }
 
     // Reachability check
-    var reachable = isReachable(hex, this.player.owned, this.player.paid);
+    var reachable = isReachable(hex, this.player.owned, this.paid);
 
     if (reachable) {
 	if (hex.owner != null) {
@@ -90,11 +90,12 @@ BuyCommand.prototype.execute = function() {
     this.hex.refresh();
     this.player.discs--;
     this.player.owned.add(this.hex);
+    var self = this;
     this.paid.forEach(function(paidHex) {
-	this.player.money--;
+	self.player.money--;
 	paidHex.owner.money++;
+	paidHex.refresh();
     });
-
     this.hex = null;
     this.paid.clear();
 }
@@ -489,10 +490,9 @@ PoliticsCommand.prototype.click = function(hex) {
 	break;
     case 2:
 	var tiles = getBridgeTiles(list);
-	var grid = ui.grid;
 	if (tiles != null) {
 	    var exists = false;
-	    grid.bridges.forEach(function(bridge) {
+	    ui.grid.bridges.forEach(function(bridge) {
 		// TODO: Could be simplified
 		if ((bridge[0] == list[0] && bridge[1] == list[1]) ||
 		    (bridge[1] == list[0] && bridge[0] == list[1])) {
@@ -505,7 +505,7 @@ PoliticsCommand.prototype.click = function(hex) {
 
 	    var isBridge = tiles[0].type == Hex.Type.WATER;
 	    if (!exists) {
-		grid.drawBridge(list[0], list[1]);
+		ui.grid.drawBridge(list[0], list[1]);
 		this.bridge = true;
 		if (isBridge && ui.game.bridgeCost > this.player.money)
 		    return "Not enough money for the bridge.";
@@ -538,9 +538,11 @@ PoliticsCommand.prototype.click = function(hex) {
 
 	    list[0].building = Hex.Building.PORT;
 	    list[1].building = Hex.Building.PORT;
-	    grid.drawPort(list[0], list[1]);
+	    list[0].refresh();
+	    list[1].refresh();
 	    list[0].highlight();
 	    list[1].highlight();
+	    ui.grid.drawPort(list[0], list[1]);
 
 	    if (ui.game.portCount == 0)
 		return "All Ports are already built.";
@@ -557,10 +559,13 @@ PoliticsCommand.prototype.click = function(hex) {
         list[0].building = Hex.Building.AIRPORT;
         list[1].building = Hex.Building.AIRPORT;
         list[2].building = Hex.Building.AIRPORT;
-        grid.drawAirport(list[0], list[1], list[2]);
-        list[0].highlight();
-        list[1].highlight();
-        list[2].highlight();
+	list[0].refresh();
+	list[1].refresh();
+	list[2].refresh();
+	list[0].highlight();
+	list[1].highlight();
+	list[2].highlight();
+        ui.grid.drawAirport(list[0], list[1], list[2]);
 
         if (ui.game.airportCount == 0)
 	    return "All Airports are already built.";
@@ -599,7 +604,9 @@ PoliticsCommand.prototype.execute = function() {
 	key.refresh();
     });
     list.sort(sorter);
-    if (!this.bridge) {
+    if (this.bridge) {
+	ui.grid.bridges.push(list);
+    } else {
 	switch (list[0].building) {
 	case Hex.Building.POLICE:
 	    ui.game.policeCount--;
@@ -617,7 +624,7 @@ PoliticsCommand.prototype.execute = function() {
 	case Hex.Building.AIRPORT:
 	    ui.game.airportCount--;
 	    this.player.money -= ui.game.airportCost;
-	    ui.grid.drawPort(list[0], list[1], list[2]);
+	    ui.grid.drawAirport(list[0], list[1], list[2]);
 	    break;
 	}
     }
@@ -812,6 +819,7 @@ function log(msg) {
 startClick = function() {
     if (ui.command != null) {
 	ui.command.abort();
+	ui.command = null;
     }
     ui.action = UI.Action.NOTHING;
 
@@ -837,10 +845,31 @@ politicsClick = function() {
 }
 
 loanClick = function() {
+    if (ui.command != null) {
+	ui.command.abort();
+	ui.command = null;
+    }
+    ui.action = UI.Action.NOTHING;
+    var player = ui.game.getCurrentPlayer();
+    player.money += 10;
+    player.loans++;
+    player.discs--;
+
+    ui.refreshButtons();
+
+    ui.game.endTurn();
 }
 
 passClick = function() {
+    if (ui.command != null) {
+	ui.command.abort();
+	ui.command = null;
+    }
+    ui.action = UI.Action.NOTHING;
 
+    ui.refreshButtons();
+
+    ui.game.pass();
 }
 
 executeClick = function() {
@@ -849,6 +878,7 @@ executeClick = function() {
 	ui.command = null;
 	ui.action = UI.Action.NOTHING;
 	ui.refreshButtons();
+	ui.game.endTurn();
     }
 }
 
@@ -1428,8 +1458,6 @@ var baseIncome = -5;
 
 function Player(color) {
     this.owned = new Set();
-    this.paid = new Set();
-    this.plan = new Set();
     this.color = color;
     this.money = initialMoney;
     this.range = initialRange;
