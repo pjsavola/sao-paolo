@@ -426,6 +426,15 @@ checkAirport = function(hex1, hex2, hex3) {
     return result;
 }
 
+refreshSpecialBuildings = function() {
+    ui.grid.ports.forEach(function(x) {
+	ui.grid.drawPort(x[0], x[1], x[2]);
+    });
+    ui.grid.airports.forEach(function(x) {
+	ui.grid.drawAirport(x[0], x[1], x[2]);
+    });
+}
+
 PoliticsCommand.prototype.click = function(hex) {
 
     // Give help for invalid clicks
@@ -472,6 +481,8 @@ PoliticsCommand.prototype.click = function(hex) {
 	key.highlight();
     });
 
+    refreshSpecialBuildings();
+
     list.sort(sorter);
 
     switch (list.length) {
@@ -502,6 +513,7 @@ PoliticsCommand.prototype.click = function(hex) {
 
 	    list[0].highlight();
 	    list[1].highlight();
+	    refreshSpecialBuildings();
 
 	    var isBridge = tiles[0].type == Hex.Type.WATER;
 	    if (!exists) {
@@ -606,6 +618,7 @@ PoliticsCommand.prototype.execute = function() {
     list.sort(sorter);
     if (this.bridge) {
 	ui.grid.bridges.push(list);
+	refreshSpecialBuildings();
     } else {
 	switch (list[0].building) {
 	case Hex.Building.POLICE:
@@ -619,11 +632,13 @@ PoliticsCommand.prototype.execute = function() {
 	case Hex.Building.PORT:
 	    ui.game.portCount--;
 	    this.player.money -= ui.game.portCost;
+	    ui.grid.ports.push([list[0], list[1]]);
 	    ui.grid.drawPort(list[0], list[1]);
 	    break;
 	case Hex.Building.AIRPORT:
 	    ui.game.airportCount--;
 	    this.player.money -= ui.game.airportCost;
+	    ui.grid.airports.push([list[0], list[1], list[2]]);
 	    ui.grid.drawAirport(list[0], list[1], list[2]);
 	    break;
 	}
@@ -642,13 +657,15 @@ PoliticsCommand.prototype.abort = function() {
 	key.building = value;
 	key.refresh();
     });
+    refreshSpecialBuildings();
     this.plan.clear();
 }
 
 /*** SELL ***/
 
 function SellCommand() {
-    
+    this.plan = new Set();
+    this.player = ui.game.getCurrentPlayer();
 }
 
 SellCommand.prototype.canExecute = function() {
@@ -656,16 +673,35 @@ SellCommand.prototype.canExecute = function() {
 }
 
 SellCommand.prototype.click = function(hex) {
+    // Unselect
+    if (this.plan.has(hex)) {
+	hex.owner = this.player;
+	this.plan.delete(hex);
+	hex.refresh();
+	return "";
+    }
 
+    if (hex.building != Hex.Building.DISC || hex.owner != this.player)
+	return "You can only select tiles where you have disc.";
+
+    this.plan.add(hex);
+    hex.owner = null;
+    hex.refresh();
+    hex.highlight();
+    return "";
 }
 
 SellCommand.prototype.execute = function() {
-
+    var self = this;
+    this.plan.forEach(function(hex) {
+	self.player.owned.delete(hex);
+	hex.refresh();
+	self.player.discs++;
+    });
+    this.plan.clear();
 }
 
 SellCommand.prototype.abort = function() {
-    this.verified = false;
-
 }
 
 //================= UI
@@ -726,6 +762,9 @@ UI.prototype.switchAction = function(action) {
 	    break;
 	case UI.Action.POLITICS:
 	    this.command = new PoliticsCommand();
+	    break;
+	case UI.Action.SELL:
+	    this.command = new SellCommand();
 	    break;
 	}
     }
@@ -792,7 +831,6 @@ UI.prototype.validateButtons = function() {
 	this.passButton.disabled = true;
 	break;
     }
-
 }
 
 UI.prototype.validateExecute = function() {
@@ -902,6 +940,8 @@ function HexagonGrid(canvasId, radius) {
 
     this.columns = new Array();
     this.bridges = new Array();
+    this.ports = new Array();
+    this.airports = new Array();
 
     this.canvas.addEventListener(
 	"mousedown", this.clickEvent.bind(this), false);
@@ -1584,11 +1624,20 @@ function Game(playerCount) {
     this.resCrime = [0, 1, 1, 1, 1, 0, 0, 0];
     this.comCrime = [0, 2, 1, 1, 0];
     this.indCrime = [0, 2, 2, 1, 1];
+
+    this.sellPhase = false;
 }
 
 Game.prototype.endTurn = function() {
     this.currentPlayerIndex++;
     this.currentPlayerIndex %= this.activePlayers.length;
+    if (this.sellPhase) {
+	if (this.currentPlayerIndex == this.firstPass) {
+	    this.sellPhase = false;
+	} else {
+	    this.sellDiscs();
+	}
+    }
 }
 
 Game.prototype.pass = function() {
@@ -1599,18 +1648,28 @@ Game.prototype.pass = function() {
 	this.currentPlayerIndex = this.firstPass;
 	this.activePlayers = this.players.slice();
 
-	this.players.forEach(function(player) {
-	    player.owned.forEach(function(hex) {
-		if (hex.building == Hex.Building.DISC) {
-		    hex.owner = null;
-		    hex.refresh();
-		}
-	    });
-	    player.owned.clear();
-	});
+	this.sellPhase = true;
+	this.sellDiscs();
     } else {
 	this.activePlayers.splice(this.currentPlayerIndex, 1);
 	this.currentPlayerIndex %= this.activePlayers.length;
+    }
+}
+
+Game.prototype.sellDiscs = function() {
+    var result = false;
+    var player = this.getCurrentPlayer();
+    player.owned.forEach(function(hex) {
+	if (hex.building == Hex.Building.DISC)
+	    result = true;
+    });
+
+    // Do not ask to sell discs if there are none
+    if (result) {
+	ui.switchAction(UI.Action.SELL);
+	ui.helpText.innerHTML = "Select discs which you want to give away.";
+    } else {
+	this.endTurn();
     }
 }
 
