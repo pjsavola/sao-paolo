@@ -98,6 +98,7 @@ BuyCommand.prototype.execute = function() {
     });
     this.hex = null;
     this.paid.clear();
+    ui.grid.drawPlayerInfos();
 }
 
 BuyCommand.prototype.abort = function() {
@@ -253,6 +254,7 @@ BuildCommand.prototype.execute = function() {
 
     this.plan = [null, null, null];
     this.verified = false;
+    ui.grid.drawPlayerInfos();
 }
 
 BuildCommand.prototype.abort = function() {
@@ -696,9 +698,12 @@ SellCommand.prototype.execute = function() {
     this.plan.forEach(function(hex) {
 	self.player.owned.delete(hex);
 	hex.refresh();
-	self.player.discs++;
+	self.player.usedDiscs++;
     });
     this.plan.clear();
+    this.player.discs += this.player.usedDiscs;
+    this.player.usedDiscs = 0;
+    ui.grid.drawPlayerInfos();
 }
 
 SellCommand.prototype.abort = function() {
@@ -731,6 +736,8 @@ function UI() {
     this.loanButton = document.getElementById("loanButton");
     this.executeButton = document.getElementById("executeButton");
     this.passButton = document.getElementById("passButton");
+    this.rangeButton = document.getElementById("rangeButton");
+    this.repayButton = document.getElementById("repayButton");
     this.helpText = document.getElementById("helpText");
 
     this.startButton.disabled = false;
@@ -740,6 +747,10 @@ function UI() {
     this.loanButton.disabled = true;
     this.executeButton.disabled = true;
     this.passButton.disabled = true;
+    this.rangeButton.disabled = false;
+    this.repayButton.disabled = false;
+    this.rangeButton.hidden = true;
+    this.repayButton.hidden = true;
 }
 
 UI.prototype.switchAction = function(action) {
@@ -848,6 +859,30 @@ UI.prototype.validateDiscs = function() {
     return player.discs > 0;
 }
 
+UI.prototype.validateRepay = function() {
+    if (this.game.sellPhase) {
+	var player = this.game.getCurrentPlayer();
+	if (player.money >= 10 && player.loans > 0) {
+	    this.repayButton.hidden = false;
+	    return true;
+	}
+    }
+    this.repayButton.hidden = true;
+    return false;
+}
+
+UI.prototype.validateRange = function() {
+    if (this.game.sellPhase) {
+	var player = this.game.getCurrentPlayer();
+	if (player.money >= 5 && player.range < 7) {
+	    this.rangeButton.hidden = false;
+	    return true;
+	}
+    }
+    this.rangeButton.hidden = true;
+    return false;
+}
+
 function log(msg) {
     setTimeout(function() {
         throw new Error(msg);
@@ -866,6 +901,9 @@ startClick = function() {
 	ui.grid = new HexagonGrid("HexCanvas", 30);
     }
     ui.grid.initialize(7, 10, 5, 5, false);
+
+    ui.validateRange();
+    ui.validateRepay();
 
     ui.refreshButtons();
 }
@@ -894,8 +932,27 @@ loanClick = function() {
     player.discs--;
 
     ui.refreshButtons();
+    ui.grid.drawPlayerInfos();
 
     ui.game.endTurn();
+}
+
+rangeClick = function() {
+    var player = ui.game.getCurrentPlayer();
+    player.money -= 5;
+    player.range++;
+    ui.validateRepay();
+    ui.validateRange();
+}
+
+repayClick = function() {
+    var player = ui.game.getCurrentPlayer();
+    player.money -= 10;
+    player.loans--;
+    player.usedDiscs++;
+    ui.validateRepay();
+    ui.validateRange();
+    ui.grid.drawPlayerInfos();
 }
 
 passClick = function() {
@@ -979,7 +1036,62 @@ HexagonGrid.prototype.refresh = function() {
 	    this.columns[col][row].refresh();
 	}
     }
+    this.drawPlayerInfos();
 };
+
+HexagonGrid.prototype.drawPlayerInfos = function() {
+    var x = this.getX(this.colCount + 1);
+    var y = this.canvasOriginY;
+    var r = this.radius / 3;
+
+    for (var i = 0; i < ui.game.players.length; i++) {
+	var player = ui.game.players[i];
+
+	this.context.clearRect(x, y - 4 + i * 55, 20 * r + 46, 2 * r + 24);
+
+	this.context.beginPath();
+	this.context.strokeStyle = player.color;
+
+	var txt = "Player " + (i + 1);
+	if (ui.game.getCurrentPlayer() == player)
+	    txt = "*** " + txt + " ***";
+	if (-1 == ui.game.activePlayers.indexOf(player)) {
+	    txt += " - PASSED";
+	    if (ui.game.players[ui.game.firstPass] == player)
+		txt += " (S)";
+	}
+        this.context.font = "8px";
+        this.context.fillStyle = "#000";
+        this.context.fillText(txt, x, y + 4 + i * 55);
+
+	this.context.rect(x, y + i * 55 + 10, 20 * r + 46, 2 * r + 10);
+	this.context.stroke();
+	for (var j = 0; j < player.discs + player.usedDiscs + player.loans;
+	     j++) {
+	    var x0 = x + r + 5 + j * 2 * (r + 2);
+	    var y0 = y + i * 55 + 10 + r + 5;
+	    this.context.strokeStyle = "#000";
+	    this.context.beginPath();
+	    this.context.arc(x0, y0, r, 0, 2 * Math.PI);
+	    this.context.stroke();
+	    this.context.fillStyle = player.color;
+	    this.context.fill();
+	    if (j >= player.discs) {
+		this.context.beginPath();
+		this.context.moveTo(x0 - r, y0 + r);
+		this.context.lineTo(x0 + r, y0 - r);
+		this.context.stroke();
+	    }
+	    if (j >= player.discs + player.usedDiscs) {
+		this.context.beginPath();
+		this.context.moveTo(x0 - r, y0 - r);
+		this.context.lineTo(x0 + r, y0 + r);
+		this.context.stroke();
+	    }
+	}
+    }
+    this.context.strokeStyle = "#000";
+}
 
 HexagonGrid.prototype.getX = function(column) {
     var drawx = (column * this.side) + this.canvasOriginX;
@@ -1502,6 +1614,7 @@ function Player(color) {
     this.money = initialMoney;
     this.range = initialRange;
     this.discs = discsTotal;
+    this.usedDiscs = 0;
     this.loans = 0;
     this.crimeTokens = 10;
     this.resHouses = 7;
@@ -1631,9 +1744,12 @@ function Game(playerCount) {
 Game.prototype.endTurn = function() {
     this.currentPlayerIndex++;
     this.currentPlayerIndex %= this.activePlayers.length;
+    ui.grid.drawPlayerInfos();
     if (this.sellPhase) {
 	if (this.currentPlayerIndex == this.firstPass) {
 	    this.sellPhase = false;
+	    ui.validateRange();
+	    ui.validateRepay();
 	} else {
 	    this.sellDiscs();
 	}
@@ -1647,27 +1763,38 @@ Game.prototype.pass = function() {
     if (this.activePlayers.length == 1) {
 	this.currentPlayerIndex = this.firstPass;
 	this.activePlayers = this.players.slice();
+	ui.grid.drawPlayerInfos();
 
 	this.sellPhase = true;
 	this.sellDiscs();
     } else {
 	this.activePlayers.splice(this.currentPlayerIndex, 1);
 	this.currentPlayerIndex %= this.activePlayers.length;
+	ui.grid.drawPlayerInfos();
     }
 }
 
 Game.prototype.sellDiscs = function() {
-    var result = false;
+    var hasDiscs = false;
     var player = this.getCurrentPlayer();
     player.owned.forEach(function(hex) {
 	if (hex.building == Hex.Building.DISC)
-	    result = true;
+	    hasDiscs = true;
     });
 
-    // Do not ask to sell discs if there are none
-    if (result) {
+    var rangePossible = ui.validateRange();
+    var repayPossible = ui.validateRepay();
+
+    var msg = "";
+    if (hasDiscs)
+	msg += "Select discs which you want to give away. ";
+    if (rangePossible)
+	msg += "Click Range++ button to increase range. ";
+    if (repayPossible)
+	msg += "You may now repay loan(s).";
+    if (hasDiscs || rangePossible || repayPossible) {
 	ui.switchAction(UI.Action.SELL);
-	ui.helpText.innerHTML = "Select discs which you want to give away.";
+	ui.helpText.innerHTML = msg;
     } else {
 	this.endTurn();
     }
