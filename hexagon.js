@@ -230,6 +230,7 @@ BuildCommand.prototype.execute = function() {
 	if (this.plan[i] != null) {
 	    this.plan[i].refresh();
 	    this.player.crimeTokens -= this.plan[i].crime;
+	    this.player.usedDiscs++;
 	}
     }
     if (this.plan[0] != null) this.player.resHouses--;
@@ -237,7 +238,6 @@ BuildCommand.prototype.execute = function() {
     if (this.plan[2] != null) this.player.indHouses--;
 
     this.player.money -= this.countCost(this.plan);
-    this.player.usedDiscs++;
 
     if (this.plan[0] != null)
 	if (ui.game.resPrice < 12) ui.game.resPrice++;
@@ -698,11 +698,9 @@ SellCommand.prototype.execute = function() {
     this.plan.forEach(function(hex) {
 	self.player.owned.delete(hex);
 	hex.refresh();
-	self.player.usedDiscs++;
+	self.player.discs++;
     });
     this.plan.clear();
-    this.player.discs += this.player.usedDiscs;
-    this.player.usedDiscs = 0;
     ui.grid.drawPlayerInfos();
 }
 
@@ -927,14 +925,22 @@ loanClick = function() {
     }
     ui.action = UI.Action.NOTHING;
     var player = ui.game.getCurrentPlayer();
-    player.money += 10;
-    player.loans++;
-    player.discs--;
+    takeLoan(player);
 
     ui.refreshButtons();
     ui.grid.drawPlayerInfos();
 
     ui.game.endTurn();
+}
+
+takeLoan = function(player) {
+    if (player.discs == 0) {
+	player.slumTokens++;
+    } else {
+	player.discs--;
+	player.loans++;
+    }
+    player.money += 10;
 }
 
 rangeClick = function() {
@@ -1043,11 +1049,16 @@ HexagonGrid.prototype.drawPlayerInfos = function() {
     var x = this.getX(this.colCount + 1);
     var y = this.canvasOriginY;
     var r = this.radius / 3;
+    var w = this.width / 3;
+    var h = this.height * 5 / 12;
+    var th = 8;
+    var py = 2 * r + 3 * h + th + 33 + 26;
+    var px = 20 * r + 46;
 
     for (var i = 0; i < ui.game.players.length; i++) {
 	var player = ui.game.players[i];
 
-	this.context.clearRect(x, y - 4 + i * 55, 20 * r + 46, 2 * r + 24);
+	this.context.clearRect(x, y + i * py, px, py);
 
 	this.context.beginPath();
 	this.context.strokeStyle = player.color;
@@ -1060,16 +1071,16 @@ HexagonGrid.prototype.drawPlayerInfos = function() {
 	    if (ui.game.players[ui.game.firstPass] == player)
 		txt += " (S)";
 	}
-        this.context.font = "8px";
+        this.context.font = th + "px";
         this.context.fillStyle = "#000";
-        this.context.fillText(txt, x, y + 4 + i * 55);
+        this.context.fillText(txt, x, y + th + i * py);
 
-	this.context.rect(x, y + i * 55 + 10, 20 * r + 46, 2 * r + 10);
+	this.context.rect(x, y + th + 5 + i * py, px, py - th - 10);
 	this.context.stroke();
 	for (var j = 0; j < player.discs + player.usedDiscs + player.loans;
 	     j++) {
 	    var x0 = x + r + 5 + j * 2 * (r + 2);
-	    var y0 = y + i * 55 + 10 + r + 5;
+	    var y0 = y + i * py + th + r + 10;
 	    this.context.strokeStyle = "#000";
 	    this.context.beginPath();
 	    this.context.arc(x0, y0, r, 0, 2 * Math.PI);
@@ -1089,8 +1100,78 @@ HexagonGrid.prototype.drawPlayerInfos = function() {
 		this.context.stroke();
 	    }
 	}
+
+	for (var j = 0; j < resIncome.length - 1; j++) {
+	    var x0 = x + w / 2 + 7 + j * (w + 14) + 3;
+	    var y0 = y + th + 2 * r + 15 + i * py + 4;
+	    drawSquare(x0, y0, w, h, th, this, "#5d5", player.color,
+		       j >= player.resHouses, resIncome[j],
+		       ui.game.resCrime[j + 1]);
+	}
+
+	for (var j = 0; j < comIncome.length - 1; j++) {
+	    var x0 = x + w / 2 + 7 + j * (w + 14) + 3;
+	    var y0 = y + th + 2 * r + 15 + i * py + 4 + h + 13;
+	    drawSquare(x0, y0, w, h, th, this, "#bbf", player.color,
+		       j >= player.comHouses, comIncome[j],
+		       ui.game.comCrime[j + 1]);
+	}
+
+	for (var j = 0; j < indIncome.length - 1; j++) {
+	    var x0 = x + w / 2 + 7 + j * (w + 14) + 3;
+	    var y0 = y + th + 2 * r + 15 + i * py + 4 + 2 * (h + 13);
+	    drawSquare(x0, y0, w, h, th, this, "#ff8", player.color,
+		       j >= player.indHouses, indIncome[j],
+		       ui.game.indCrime[j + 1]);
+	}
+
+        this.context.font = th + "px";
+        this.context.fillStyle = "#000";
+	var x0 = x + 4 * w + 70;
+	var y0 = y + th + 2 * r + i * py + h + 39;
+	var crime = crimeTotal - player.crimeTokens;	
+	var income = countIncome(player);
+	var points = -3 * player.slumTokens;
+        this.context.fillText("Money: " + player.money, x0, y0);
+        this.context.fillText("Income: " + income, x0, y0 + 13);
+        this.context.fillText("Crime: " + crime, x0, y0 + 26);
+	this.context.fillText("Points: " + points, x0, y0 + 39);
+	this.context.fillText("Range: " + player.range, x0, y0 + 52);
     }
     this.context.strokeStyle = "#000";
+}
+
+countIncome = function(player) {
+    var crime = crimeTotal - player.crimeTokens;
+    var income = resIncome[player.resHouses] + comIncome[player.comHouses]
+	+ indIncome[player.indHouses] - discsTotal + player.discs;
+    return income;
+}
+
+drawSquare = function(x0, y0, w, h, th, grid, color, playerColor, empty, txt, crime) {
+    var ctx = grid.context;
+    ctx.beginPath();
+    ctx.rect(x0 - w / 2 - 4, y0 - 4, w + 8, h + 8);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.stroke();
+    if (!empty) {
+	drawHouse(x0, y0, grid, playerColor);
+	if (crime > 0) {
+	    var locs = crimeLocs[crime - 1];
+	    for (var k = 0; k < locs.length; k++) {
+		ctx.beginPath();
+		ctx.arc(x0 + locs[k] * grid.width, y0 + h, grid.width / 24, 0, 2 * Math.PI);
+		ctx.fillStyle = "#941";
+		ctx.fill();
+		ctx.stroke();
+	    }
+	}
+    } else {
+	ctx.font = th + "px";
+	ctx.fillStyle = "#000";
+	ctx.fillText(txt, x0 - 4, y0 + h / 2 + 4);
+    }
 }
 
 HexagonGrid.prototype.getX = function(column) {
@@ -1119,22 +1200,26 @@ HexagonGrid.prototype.drawCircle = function(x0, y0, fillColor) {
     this.context.fill();
 };
 
+drawHouse = function(x0, y0, grid, color) {
+    var w = grid.width / 3;
+    var h = grid.height * 5 / 12;
+    var rh = grid.height / 6;
+    var ctx = grid.context;
+    ctx.strokeStyle = "#000";
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x0 + w / 2, y0 + rh);
+    ctx.lineTo(x0 + w / 2, y0 + h);
+    ctx.lineTo(x0 - w / 2, y0 + h);
+    ctx.lineTo(x0 - w / 2, y0 + rh);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.closePath();
+    ctx.stroke();
+}
+
 HexagonGrid.prototype.drawHouse = function(x0, y0, fillColor) {
-    this.context.strokeStyle = "#000";
-    this.context.beginPath();
-    this.context.moveTo(x0 + this.width / 2, y0 + this.height / 6);
-    this.context.lineTo(x0 + this.width * 2 / 3, y0 + this.height / 3);
-    this.context.lineTo(x0 + this.width * 2 / 3, y0 + this.height * 7 / 12);
-    this.context.lineTo(x0 + this.width * 1 / 3, y0 + this.height * 7 / 12);
-    this.context.lineTo(x0 + this.width * 1 / 3, y0 + this.height / 3);
-
-    if (fillColor) {
-        this.context.fillStyle = fillColor;
-        this.context.fill();
-    }
-
-    this.context.closePath();
-    this.context.stroke();
+    drawHouse(x0 + this.width / 2, y0 + this.height / 6, this, fillColor);
 };
 
 HexagonGrid.prototype.drawBridge = function(a, b) {
@@ -1598,7 +1683,7 @@ Hex.prototype.getNeighbors = function() {
 
 //===================================================================== Player
 
-var resIncome = [8, 7, 6, 5, 4, 3, 2, 1, 0];
+var resIncome = [7, 6, 5, 4, 3, 2, 1, 0];
 var comIncome = [9, 6, 4, 2, 0];
 var indIncome = [11, 8, 5, 3, 0];
 
@@ -1620,6 +1705,7 @@ function Player(color) {
     this.resHouses = 7;
     this.comHouses = 4;
     this.indHouses = 4;
+    this.slumTokens = 0;
 };
 
 Player.prototype.spit = function() {
@@ -1734,6 +1820,8 @@ function Game(playerCount) {
     this.portCost = 5;
     this.airportCost = 5;
 
+    this.slums = 10;
+
     this.resCrime = [0, 1, 1, 1, 1, 0, 0, 0];
     this.comCrime = [0, 2, 1, 1, 0];
     this.indCrime = [0, 2, 2, 1, 1];
@@ -1763,6 +1851,7 @@ Game.prototype.pass = function() {
     if (this.activePlayers.length == 1) {
 	this.currentPlayerIndex = this.firstPass;
 	this.activePlayers = this.players.slice();
+	this.endRound();
 	ui.grid.drawPlayerInfos();
 
 	this.sellPhase = true;
@@ -1802,4 +1891,17 @@ Game.prototype.sellDiscs = function() {
 
 Game.prototype.getCurrentPlayer = function() {
     return this.activePlayers[this.currentPlayerIndex];
+}
+
+Game.prototype.endRound = function() {
+    this.players.forEach(function(player) {
+	var income = countIncome(player);
+	while (income + player.money < 0) {
+	    takeLoan(player);
+	    income = countIncome(player);
+	}
+	player.money += income;
+	player.discs += player.usedDiscs;
+	player.usedDiscs = 0;
+    });
 }
