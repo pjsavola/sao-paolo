@@ -239,18 +239,21 @@ BuildCommand.prototype.execute = function() {
 
     this.player.money -= this.countCost(this.plan);
 
-    if (this.plan[0] != null)
+    if (this.plan[0] != null) {
 	if (ui.game.resPrice < 12) ui.game.resPrice++;
-    else
+    } else {
 	if (ui.game.resPrice > 4) ui.game.resPrice--;
-    if (this.plan[1] != null)
+    }
+    if (this.plan[1] != null) {
 	if (ui.game.comPrice < 12) ui.game.comPrice++;
-    else
+    } else {
 	if (ui.game.comPrice > 4) ui.game.comPrice--;
-    if (this.plan[2] != null)
+    }
+    if (this.plan[2] != null) {
 	if (ui.game.indPrice < 12) ui.game.indPrice++;
-    else
+    } else {
 	if (ui.game.indPrice > 4) ui.game.indPrice--;
+    }
 
     this.plan = [null, null, null];
     this.verified = false;
@@ -626,6 +629,14 @@ PoliticsCommand.prototype.execute = function() {
 	case Hex.Building.POLICE:
 	    ui.game.policeCount--;
 	    this.player.money -= ui.game.policeCost;
+	    list[0].getNeighbors().forEach(function(hex) {
+		if (hex.owner != null && hex.crime > 0) {
+		    hex.crime--;
+		    hex.owner.crimeTokens++;
+		    hex.refresh();
+		}
+	    });
+	    ui.grid.drawPlayerInfos();
 	    break;
 	case Hex.Building.PARK:
 	    ui.game.parkCount--;
@@ -936,6 +947,7 @@ loanClick = function() {
 takeLoan = function(player) {
     if (player.discs == 0) {
 	player.slumTokens++;
+	ui.game.slums--;
     } else {
 	player.discs--;
 	player.loans++;
@@ -1107,6 +1119,12 @@ HexagonGrid.prototype.drawPlayerInfos = function() {
 	    drawSquare(x0, y0, w, h, th, this, "#5d5", player.color,
 		       j >= player.resHouses, resIncome[j],
 		       ui.game.resCrime[j + 1]);
+	    if (j == player.resHouses - 1) {
+		var price = ui.game.resPrice;
+		this.context.font = th + "px";
+		this.context.fillStyle = "#000";
+		this.context.fillText(price, x0 - (price < 10 ? 3 : 6), y0 + h / 2 + 7);
+	    }
 	}
 
 	for (var j = 0; j < comIncome.length - 1; j++) {
@@ -1115,6 +1133,12 @@ HexagonGrid.prototype.drawPlayerInfos = function() {
 	    drawSquare(x0, y0, w, h, th, this, "#bbf", player.color,
 		       j >= player.comHouses, comIncome[j],
 		       ui.game.comCrime[j + 1]);
+	    if (j == player.comHouses - 1) {
+		var price = ui.game.comPrice;
+		this.context.font = th + "px";
+		this.context.fillStyle = "#000";
+		this.context.fillText(price, x0 - (price < 10 ? 3 : 6), y0 + h / 2 + 7);
+	    }
 	}
 
 	for (var j = 0; j < indIncome.length - 1; j++) {
@@ -1123,6 +1147,12 @@ HexagonGrid.prototype.drawPlayerInfos = function() {
 	    drawSquare(x0, y0, w, h, th, this, "#ff8", player.color,
 		       j >= player.indHouses, indIncome[j],
 		       ui.game.indCrime[j + 1]);
+	    if (j == player.indHouses - 1) {
+		var price = ui.game.indPrice;
+		this.context.font = th + "px";
+		this.context.fillStyle = "#000";
+		this.context.fillText(price, x0 - (price < 10 ? 3 : 6), y0 + h / 2 + 7);
+	    }
 	}
 
         this.context.font = th + "px";
@@ -1264,6 +1294,18 @@ HexagonGrid.prototype.drawPark = function(x0, y0) {
     this.context.fillStyle = "#0d0";
     this.context.fill();
 };
+
+HexagonGrid.prototype.drawSlum = function(x0, y0) {
+    this.context.strokeStyle = "#941";
+    this.context.beginPath();
+    this.context.moveTo(x0 + this.width / 3, y0 + this.height / 3);
+    this.context.lineTo(x0 + this.width * 2 / 3, y0 + this.height * 2 / 3);
+    this.context.moveTo(x0 + this.width / 3, y0 + this.height * 2 / 3);
+    this.context.lineTo(x0 + this.width * 2 / 3, y0 + this.height / 3);
+    this.context.lineWidth = this.radius / 5;
+    this.context.stroke();
+    this.context.lineWidth = 1;
+}
 
 HexagonGrid.prototype.drawPort = function(a, b) {
     this.context.strokeStyle = "#000";
@@ -1515,7 +1557,8 @@ Hex.Building = {
     POLICE : 3,
     PARK : 4,
     PORT : 5,
-    AIRPORT : 6
+    AIRPORT : 6,
+    SLUM : 7
 }
 
 function Hex(grid, col, row, type, text) {
@@ -1560,6 +1603,9 @@ Hex.prototype.draw = function(color) {
 	break;
     case Hex.Building.PARK:
 	this.grid.drawPark(x, y);
+	break;
+    case Hex.Building.SLUM:
+	this.grid.drawSlum(x, y);
 	break;
     default:
 	break;
@@ -1796,7 +1842,7 @@ function Game(playerCount) {
     this.firstPass = 0;
 
     if (playerCount > 0) this.players.push(new Player("#f00"));
-    if (playerCount > 1) this.players.push(new Player("#00f"));
+    if (playerCount > 1) this.players.push(new Player("#66f"));
     if (playerCount > 2) this.players.push(new Player("#0f0"));
     if (playerCount > 3) this.players.push(new Player("#dd0"));
     if (playerCount > 4) this.players.push(new Player("#111"));
@@ -1903,5 +1949,39 @@ Game.prototype.endRound = function() {
 	player.money += income;
 	player.discs += player.usedDiscs;
 	player.usedDiscs = 0;
+    });
+
+    // SLUMS
+    var slums = new Array();
+    this.players.forEach(function(player) {
+	player.owned.forEach(function(hex) {
+	    if (hex.crime > 0) {
+		var crimeTotal = hex.crime;
+		var crimeMax = hex.crime;
+		hex.getNeighbors().forEach(function(n) {
+		    crimeTotal += n.crime;
+		    if (n.crime > crimeMax)
+			crimeMax = n.crime;
+		});
+		if (crimeMax == hex.crime && crimeTotal >= 6)
+		    slums.push(hex);
+	    }
+	});
+    });
+
+    slums.forEach(function(hex) {
+	hex.owner.owned.delete(hex);
+	hex.owner.crimeTokens += hex.crime;
+	hex.crime = 0;
+	if (hex.type == Hex.Type.RESIDENCE)
+	    hex.owner.resHouses++;
+	if (hex.type == Hex.Type.COMMERCE)
+	    hex.owner.comHouses++;
+	if (hex.type == Hex.Type.INDUSTRY)
+	    hex.owner.indHouses++;
+	hex.owner = null;
+	hex.building = Hex.Building.SLUM;
+	this.slums--;
+	hex.refresh();
     });
 }
