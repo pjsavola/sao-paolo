@@ -622,6 +622,10 @@ PoliticsCommand.prototype.execute = function() {
     });
     list.sort(sorter);
     if (this.bridge) {
+	if (list[0].type == Hex.Type.WATER)
+	    this.player.money -= ui.game.bridgeCost;
+	else
+	    this.player.money -= ui.game.tunnelCost;
 	ui.grid.bridges.push(list);
 	refreshSpecialBuildings();
     } else {
@@ -938,10 +942,8 @@ loanClick = function() {
     var player = ui.game.getCurrentPlayer();
     takeLoan(player);
 
-    ui.refreshButtons();
-    ui.grid.drawPlayerInfos();
-
     ui.game.endTurn();
+    ui.refreshButtons();
 }
 
 takeLoan = function(player) {
@@ -967,7 +969,7 @@ repayClick = function() {
     var player = ui.game.getCurrentPlayer();
     player.money -= 10;
     player.loans--;
-    player.usedDiscs++;
+    player.discs++;
     ui.validateRepay();
     ui.validateRange();
     ui.grid.drawPlayerInfos();
@@ -980,8 +982,6 @@ passClick = function() {
     }
     ui.action = UI.Action.NOTHING;
 
-    ui.refreshButtons();
-
     ui.game.pass();
 }
 
@@ -990,7 +990,6 @@ executeClick = function() {
 	ui.command.execute();
 	ui.command = null;
 	ui.action = UI.Action.NOTHING;
-	ui.refreshButtons();
 	ui.game.endTurn();
     }
 }
@@ -1161,7 +1160,7 @@ HexagonGrid.prototype.drawPlayerInfos = function() {
 	var y0 = y + th + 2 * r + i * py + h + 39;
 	var crime = crimeTotal - player.crimeTokens;	
 	var income = countIncome(player);
-	var points = -3 * player.slumTokens;
+	var points = countPoints(player);
         this.context.fillText("Money: " + player.money, x0, y0);
         this.context.fillText("Income: " + income, x0, y0 + 13);
         this.context.fillText("Crime: " + crime, x0, y0 + 26);
@@ -1171,10 +1170,40 @@ HexagonGrid.prototype.drawPlayerInfos = function() {
     this.context.strokeStyle = "#000";
 }
 
+countPoints = function(player) {
+    var result = 0;
+    player.owned.forEach(function(hex) {
+	if (hex.building == Hex.Building.HOUSE) {
+	    var value = 2 - hex.crime;
+	    var slum = false;
+	    hex.getNeighbors().forEach(function(n) {
+		if (n.building == Hex.Building.SLUM) slum = true;
+	    });
+	    if (slum) value--;
+	    if (hex.type == Hex.Type.RESIDENCE ||
+		hex.type == Hex.Type.COMMERCE) {
+		var water = false;
+		var park = false;
+		hex.getNeighbors().forEach(function(n) {
+		    if (n.type == Hex.Type.WATER) water = true;
+		    if (n.building == Hex.Building.PARK) park = true;
+		});
+		if (water) value++;
+		if (park) value++;
+	    }
+	    if (value > 0) result += value;
+	}
+    });
+    result -= player.loans;
+    result -= 3 * player.slumTokens;
+    return result;
+}
+
 countIncome = function(player) {
     var crime = crimeTotal - player.crimeTokens;
     var income = resIncome[player.resHouses] + comIncome[player.comHouses]
-	+ indIncome[player.indHouses] - discsTotal + player.discs;
+	+ indIncome[player.indHouses] - discsTotal +
+	player.discs - crimeTotal + player.crimeTokens;
     return income;
 }
 
@@ -1879,6 +1908,7 @@ Game.prototype.endTurn = function() {
     this.currentPlayerIndex++;
     this.currentPlayerIndex %= this.activePlayers.length;
     ui.grid.drawPlayerInfos();
+    ui.refreshButtons();
     if (this.sellPhase) {
 	if (this.currentPlayerIndex == this.firstPass) {
 	    this.sellPhase = false;
@@ -1907,6 +1937,7 @@ Game.prototype.pass = function() {
 	this.currentPlayerIndex %= this.activePlayers.length;
 	ui.grid.drawPlayerInfos();
     }
+    ui.refreshButtons();
 }
 
 Game.prototype.sellDiscs = function() {
